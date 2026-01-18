@@ -58,12 +58,19 @@ def main():
     migrations_dir = _resolve_migrations_dir()
     
     with app.app_context():
-        # Initialize migrations if needed
-        if not migrations_dir.exists():
+        env_py = migrations_dir / "env.py"
+
+        # Initialize migrations if directory missing or env.py missing
+        if (not migrations_dir.exists()) or (not env_py.exists()):
             print("Initializing migrations directory...")
             try:
-                migrate_init(directory=str(migrations_dir))
-                print(f"✓ Created migrations directory at {migrations_dir}")
+                # Remove partial directory if it exists but is missing env.py to avoid alembic confusion
+                if migrations_dir.exists() and not env_py.exists():
+                    # keep directory but re-init to generate env.py and script versions
+                    migrate_init(directory=str(migrations_dir))
+                else:
+                    migrate_init(directory=str(migrations_dir))
+                print(f"✓ Migrations initialized at {migrations_dir}")
             except Exception as e:
                 print(f"✗ Migration init failed: {e}")
                 return 1
