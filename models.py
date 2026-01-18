@@ -10,7 +10,9 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     etsy_user_id = db.Column(db.String(255), unique=True, nullable=False)
     username = db.Column(db.String(255), nullable=False)
+    first_name = db.Column(db.String(255))  # NEW
     shop_id = db.Column(db.String(50))
+    shop_name = db.Column(db.String(255))  # NEW
     access_token = db.Column(db.Text, nullable=False)
     refresh_token = db.Column(db.Text)
     token_expires_at = db.Column(db.DateTime)
@@ -26,6 +28,9 @@ class User(db.Model):
             'id': self.id,
             'etsy_user_id': self.etsy_user_id,
             'username': self.username,
+            'first_name': self.first_name,  # NEW
+            'shop_id': self.shop_id,
+            'shop_name': self.shop_name,  # NEW
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }

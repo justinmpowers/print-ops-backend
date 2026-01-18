@@ -16,6 +16,7 @@ class EtsyOAuth:
     ETSY_AUTH_URL = 'https://www.etsy.com/oauth/connect'
     ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
     ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/me'
+    ETSY_SHOP_URL = 'https://api.etsy.com/v3/application/shops'
     
     @staticmethod
     def get_authorization_url():
@@ -33,13 +34,13 @@ class EtsyOAuth:
             'response_type': 'code',
             'client_id': current_app.config['ETSY_CLIENT_ID'],
             'redirect_uri': current_app.config['ETSY_REDIRECT_URI'],
-            'scope': 'transactions_r shops_r',
+            'scope': 'transactions_r shops_r email_r',  # Added email_r and shops_r
             'state': state,
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256'
         }
         
-        # Store state in session for verification (code_verifier will come from frontend)
+        # Store state in session for verification
         session['oauth_state'] = state
         
         return f"{EtsyOAuth.ETSY_AUTH_URL}?{urlencode(params)}", state, code_verifier
@@ -55,7 +56,6 @@ class EtsyOAuth:
             'code': code
         }
         
-        # Add code_verifier for PKCE
         if code_verifier:
             data['code_verifier'] = code_verifier
             print(f"DEBUG: Using PKCE code_verifier")
@@ -64,11 +64,8 @@ class EtsyOAuth:
         
         try:
             print(f"DEBUG: Posting to Etsy token URL: {EtsyOAuth.ETSY_TOKEN_URL}")
-            print(f"DEBUG: Request data: {data}")
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             print(f"DEBUG: Etsy response status: {response.status_code}")
-            print(f"DEBUG: Etsy response headers: {response.headers}")
-            print(f"DEBUG: Etsy response body: {response.text}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -85,16 +82,32 @@ class EtsyOAuth:
         
         try:
             print(f"DEBUG: Getting user info from {EtsyOAuth.ETSY_USER_URL}")
-            print(f"DEBUG: Headers: {headers}")
             response = requests.get(EtsyOAuth.ETSY_USER_URL, headers=headers)
             print(f"DEBUG: User info response status: {response.status_code}")
-            print(f"DEBUG: User info response headers: {response.headers}")
-            print(f"DEBUG: User info response body: {response.text}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
             print(f"DEBUG: User info request exception: {str(e)}")
             raise Exception(f"Failed to get user info: {str(e)}")
+    
+    @staticmethod
+    def get_shop_info(access_token, shop_id):
+        """Get shop information from Etsy"""
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'x-api-key': current_app.config['ETSY_CLIENT_ID']
+        }
+        
+        try:
+            url = f"{EtsyOAuth.ETSY_SHOP_URL}/{shop_id}"
+            print(f"DEBUG: Getting shop info from {url}")
+            response = requests.get(url, headers=headers)
+            print(f"DEBUG: Shop info response status: {response.status_code}")
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"DEBUG: Shop info request exception: {str(e)}")
+            raise Exception(f"Failed to get shop info: {str(e)}")
     
     @staticmethod
     def refresh_access_token(refresh_token):
@@ -156,46 +169,25 @@ def token_required(f):
     def decorated(*args, **kwargs):
         token = None
         
-        # Get token from Authorization header
         if 'Authorization' in request.headers:
             auth_header = request.headers['Authorization']
             try:
                 token = auth_header.split(" ")[1]
             except IndexError:
-                print("DEBUG: Invalid token format in Authorization header")
                 return jsonify({'message': 'Invalid token format'}), 401
         
         if not token:
-            print("DEBUG: No token provided")
             return jsonify({'message': 'Token is missing'}), 401
         
-        print(f"DEBUG: Verifying token...")
         payload = TokenManager.verify_token(token)
         if not payload:
-            print("DEBUG: Token verification failed")
             return jsonify({'message': 'Invalid or expired token'}), 401
         
-        print(f"DEBUG: Token payload: {payload}")
-        
-        # Get user from database
-        # Check if payload contains 'id' (primary key) or 'etsy_user_id'
-        if 'id' in payload:
-            user = User.query.get(payload['id'])
-        elif 'user_id' in payload:
-            # If payload contains database ID
-            user = User.query.get(payload['user_id'])
-        elif 'etsy_user_id' in payload:
-            # If payload contains Etsy user ID
-            user = User.query.filter_by(etsy_user_id=str(payload['etsy_user_id'])).first()
-        else:
-            print(f"DEBUG: No valid user identifier in payload")
-            return jsonify({'message': 'Invalid token payload'}), 401
+        user = User.query.get(payload['user_id'])
         
         if not user:
-            print(f"DEBUG: User not found for payload: {payload}")
             return jsonify({'message': 'User not found'}), 404
         
-        print(f"DEBUG: User found: {user.etsy_user_id}")
         request.user = user
         return f(*args, **kwargs)
     
