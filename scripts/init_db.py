@@ -54,6 +54,18 @@ def main():
     
     with app.app_context():
         if args.migrate:
+            env_py = migrations_dir / "env.py"
+            if not env_py.exists():
+                try:
+                    print("Initializing migrations directory...")
+                    migrate_upgrade  # no-op to keep import (clarity)
+                    from flask_migrate import init as migrate_init
+                    migrate_init(directory=str(migrations_dir))
+                    print(f"✓ Migrations initialized at {migrations_dir}")
+                except Exception as e:
+                    print(f"✗ Migration init failed: {e}")
+                    return
+
             print("Applying migrations...")
             try:
                 migrate_upgrade(directory=str(migrations_dir))
