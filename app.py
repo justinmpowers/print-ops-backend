@@ -100,10 +100,9 @@ def create_app(config_name='development'):
             if shop_id:
                 try:
                     shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
-                    shop_name = shop_info.get('shop_name', '')  # NEW
-                    print(f"DEBUG: Shop name: {shop_name}")
+                    shop_name = shop_info.get('shop_name', '')
                 except Exception as e:
-                    print(f"DEBUG: Could not fetch shop info: {e}")
+                    pass  # Silently ignore shop info fetch errors
             
             # Use first_name or fallback to username
             username = first_name if first_name else f"etsy_user_{etsy_user_id}"

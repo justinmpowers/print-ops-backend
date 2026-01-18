@@ -57,15 +57,9 @@ class EtsyOAuth:
         
         if code_verifier:
             data['code_verifier'] = code_verifier
-            print("DEBUG: Using PKCE code_verifier")
-        else:
-            print("DEBUG: No PKCE code_verifier provided")
         
         try:
-            print(f"DEBUG: Posting to Etsy token URL: {EtsyOAuth.ETSY_TOKEN_URL}")
-            print(f"DEBUG: Request data: {data}")
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
-            print(f"DEBUG: Etsy response status: {response.status_code}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -80,16 +74,10 @@ class EtsyOAuth:
         }
         
         try:
-            print(f"DEBUG: Getting user info from {EtsyOAuth.ETSY_USER_URL}")
-            print(f"DEBUG: Headers: {headers}")
             response = requests.get(EtsyOAuth.ETSY_USER_URL, headers=headers)
-            print(f"DEBUG: User info response status: {response.status_code}")
-            print(f"DEBUG: User info response headers: {response.headers}")
-            print(f"DEBUG: User info response body: {response.text}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            print(f"DEBUG: User info request exception: {str(e)}")
             raise Exception(f"Failed to get user info: {str(e)}")
     
     @staticmethod

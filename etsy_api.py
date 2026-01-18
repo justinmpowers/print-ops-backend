@@ -99,11 +99,8 @@ class OrderSyncManager:
             offset = 0
             limit = 100
             
-            print(f"DEBUG: Fetching receipts from {start_date} to {end_date}")
-            
             # Fetch ALL receipts
             while True:
-                print(f"DEBUG: Fetching receipts with offset {offset}")
                 response = etsy_api.get_shop_receipts(
                     shop_id,
                     limit=limit,
@@ -113,7 +110,6 @@ class OrderSyncManager:
                 )
                 
                 receipts = response.get('results', [])
-                print(f"DEBUG: Received {len(receipts)} receipts")
                 
                 if not receipts:
                     break
@@ -126,8 +122,6 @@ class OrderSyncManager:
                     break
                 
                 offset += limit
-            
-            print(f"DEBUG: Total receipts fetched: {len(all_receipts)}")
             
             # Count statuses for debugging
             status_counts = {}
@@ -186,10 +180,6 @@ class OrderSyncManager:
                 # Track status counts for debugging
                 status_counts[status] = status_counts.get(status, 0) + 1
                 
-                print(f"DEBUG: Receipt {receipt_id} - Etsy status: '{etsy_status}' -> Internal: '{status}'")
-                
-                print(f"DEBUG: Receipt {receipt_id} - Etsy status: {etsy_status}, Final status: {status}")
-                
                 if existing_order:
                     # Update existing order
                     existing_order.status = status
@@ -235,14 +225,12 @@ class OrderSyncManager:
                             )
                             order.items.append(item)
                     except Exception as e:
-                        print(f"DEBUG: Error fetching transactions for receipt {receipt_id}: {e}")
+                        pass  # Silently ignore transaction fetch errors
                     
                     db.session.add(order)
                     saved_count += 1
             
             db.session.commit()
-            
-            print(f"DEBUG: Status distribution: {status_counts}")
             
             return {
                 'success': True,
@@ -254,7 +242,6 @@ class OrderSyncManager:
             }
         
         except Exception as e:
-            print(f"DEBUG: Exception in sync_orders_from_etsy: {str(e)}")
             import traceback
             traceback.print_exc()
             db.session.rollback()
