@@ -37,8 +37,6 @@ class EtsyAPI:
             offset: Offset for pagination
             min_created: Unix timestamp for minimum creation date
             max_created: Unix timestamp for maximum creation date
-            was_paid: Filter by paid status (true/false)
-            was_shipped: Filter by shipped status (true/false)
         """
         return self._make_request('GET', f'/application/shops/{shop_id}/receipts', params=params)
     
@@ -52,6 +50,36 @@ class EtsyAPI:
 
 class OrderSyncManager:
     """Manage syncing orders from Etsy to local database"""
+    
+    @staticmethod
+    def normalize_status(etsy_status):
+        """
+        Normalize Etsy status to internal status format
+        
+        Etsy statuses (from API):
+        - open: Created but not paid (legacy)
+        - paid: Paid and ready for shipping
+        - completed: Shipped and complete
+        - payment processing: Payment submitted but not processed
+        - canceled: Order canceled
+        
+        Internal statuses:
+        - NEW: Created but not paid
+        - PROCESSING: Payment being processed
+        - PAID: Paid and ready for shipping
+        - COMPLETED: Shipped and complete
+        - CANCELED: Order canceled
+        """
+        status_map = {
+            'open': 'NEW',
+            'payment processing': 'PROCESSING',
+            'paid': 'PAID',
+            'completed': 'COMPLETED',
+            'canceled': 'CANCELED'
+        }
+        
+        # Return mapped status or uppercase the original if not in map
+        return status_map.get(etsy_status.lower(), etsy_status.upper())
     
     @staticmethod
     def sync_orders_from_etsy(user, shop_id, etsy_api, months=6):
@@ -71,22 +99,17 @@ class OrderSyncManager:
             offset = 0
             limit = 100
             
-            print(f"DEBUG: Fetching receipts from {start_date} to {end_date}")
-            
-            # Fetch all paid receipts
+            # Fetch ALL receipts
             while True:
-                print(f"DEBUG: Fetching receipts with offset {offset}")
                 response = etsy_api.get_shop_receipts(
                     shop_id,
                     limit=limit,
                     offset=offset,
                     min_created=min_created,
-                    max_created=max_created,
-                    was_paid=True  # Only get paid orders
+                    max_created=max_created
                 )
                 
                 receipts = response.get('results', [])
-                print(f"DEBUG: Received {len(receipts)} receipts")
                 
                 if not receipts:
                     break
@@ -100,7 +123,8 @@ class OrderSyncManager:
                 
                 offset += limit
             
-            print(f"DEBUG: Total receipts fetched: {len(all_receipts)}")
+            # Count statuses for debugging
+            status_counts = {}
             
             # Save to database
             saved_count = 0
@@ -149,32 +173,12 @@ class OrderSyncManager:
                     etsy_order_id=receipt_id
                 ).first()
                 
-                # Debug: Log receipt status fields
-                print(f"DEBUG: Receipt {receipt_id} - status: {receipt_data.get('status')}, is_shipped: {receipt_data.get('is_shipped')}")
+                # Get status directly from receipt data
+                etsy_status = receipt_data.get('status', 'open')
+                status = OrderSyncManager.normalize_status(etsy_status)
                 
-                # Determine status based on Etsy receipt status field
-                # Etsy API v3 status values: "Open", "Paid", "Completed", "Canceled"
-                etsy_status = receipt_data.get('status', 'Paid')
-                
-                # Map Etsy status to our status
-                status_mapping = {
-                    'Open': 'PENDING',
-                    'Paid': 'PAID',
-                    'Completed': 'COMPLETED',
-                    'Canceled': 'CANCELED',
-                    'Cancelled': 'CANCELED'
-                }
-                
-                status = status_mapping.get(etsy_status, 'PAID')
-                
-                # Override with more specific status if available
-                if receipt_data.get('has_refunds', False):
-                    status = 'REFUNDED'
-                elif receipt_data.get('is_shipped', False) and status == 'PAID':
-                    # If marked as shipped but Etsy status is still "Paid", use SHIPPED
-                    status = 'SHIPPED'
-                
-                print(f"DEBUG: Receipt {receipt_id} - Etsy status: {etsy_status}, Final status: {status}")
+                # Track status counts for debugging
+                status_counts[status] = status_counts.get(status, 0) + 1
                 
                 if existing_order:
                     # Update existing order
@@ -221,7 +225,7 @@ class OrderSyncManager:
                             )
                             order.items.append(item)
                     except Exception as e:
-                        print(f"DEBUG: Error fetching transactions for receipt {receipt_id}: {e}")
+                        pass  # Silently ignore transaction fetch errors
                     
                     db.session.add(order)
                     saved_count += 1
@@ -233,11 +237,11 @@ class OrderSyncManager:
                 'total_receipts': len(all_receipts),
                 'new_orders_saved': saved_count,
                 'updated_orders': updated_count,
+                'status_counts': status_counts,
                 'message': f'Successfully synced {saved_count} new orders and updated {updated_count} existing orders'
             }
         
         except Exception as e:
-            print(f"DEBUG: Exception in sync_orders_from_etsy: {str(e)}")
             import traceback
             traceback.print_exc()
             db.session.rollback()

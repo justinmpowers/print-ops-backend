@@ -16,7 +16,6 @@ class EtsyOAuth:
     ETSY_AUTH_URL = 'https://www.etsy.com/oauth/connect'
     ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
     ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/me'
-    ETSY_SHOP_URL = 'https://api.etsy.com/v3/application/shops/{shop_id}'
     
     @staticmethod
     def get_authorization_url():
@@ -34,13 +33,13 @@ class EtsyOAuth:
             'response_type': 'code',
             'client_id': current_app.config['ETSY_CLIENT_ID'],
             'redirect_uri': current_app.config['ETSY_REDIRECT_URI'],
-            'scope': 'transactions_r shops_r',
+            'scope': 'transactions_r shops_r email_r',  # Added email_r and shops_r
             'state': state,
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256'
         }
         
-        # Store state in session for verification (code_verifier will come from frontend)
+        # Store state in session for verification
         session['oauth_state'] = state
         
         return f"{EtsyOAuth.ETSY_AUTH_URL}?{urlencode(params)}", state, code_verifier
@@ -56,27 +55,14 @@ class EtsyOAuth:
             'code': code
         }
         
-        # Add code_verifier for PKCE
         if code_verifier:
             data['code_verifier'] = code_verifier
-            logger.info("Using PKCE code_verifier")
-        else:
-            logger.info("No PKCE code_verifier provided")
         
         try:
-            logger.info(f"Posting to Etsy token URL: {EtsyOAuth.ETSY_TOKEN_URL}")
-            # NOTE: Never log request data as it contains sensitive credentials
-            response = requests.post(
-                EtsyOAuth.ETSY_TOKEN_URL,
-                data=data,
-                timeout=current_app.config.get('HTTP_TIMEOUT', 10)
-            )
-            logger.info(f"Etsy response status: {response.status_code}")
-            # NOTE: Never log response body or headers as they may contain tokens
+            response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Request exception during token exchange: {type(e).__name__}")
             raise Exception(f"Failed to exchange code for token: {str(e)}")
     
     @staticmethod
@@ -88,41 +74,11 @@ class EtsyOAuth:
         }
         
         try:
-            logger.info(f"Getting user info from {EtsyOAuth.ETSY_USER_URL}")
-            # NOTE: Never log headers as they contain bearer tokens
-            response = requests.get(
-                EtsyOAuth.ETSY_USER_URL,
-                headers=headers,
-                timeout=current_app.config.get('HTTP_TIMEOUT', 10)
-            )
-            logger.info(f"User info response status: {response.status_code}")
-            # NOTE: Never log response body as it may contain sensitive user data
+            response = requests.get(EtsyOAuth.ETSY_USER_URL, headers=headers)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"User info request failed: {type(e).__name__}")
-            raise Exception(f"Failed to get user info: {type(e).__name__}")
-    
-    @staticmethod
-    def get_shop_info(access_token, shop_id):
-        """Get shop details including shop name"""
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'x-api-key': current_app.config['ETSY_CLIENT_ID']
-        }
-        
-        try:
-            url = EtsyOAuth.ETSY_SHOP_URL.format(shop_id=shop_id)
-            response = requests.get(
-                url,
-                headers=headers,
-                timeout=current_app.config.get('HTTP_TIMEOUT', 10)
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Shop info request failed: {type(e).__name__}")
-            return None
+            raise Exception(f"Failed to get user info: {str(e)}")
     
     @staticmethod
     def refresh_access_token(refresh_token):
@@ -188,44 +144,25 @@ def token_required(f):
     def decorated(*args, **kwargs):
         token = None
         
-        # Get token from Authorization header
         if 'Authorization' in request.headers:
             auth_header = request.headers['Authorization']
             try:
                 token = auth_header.split(" ")[1]
             except IndexError:
-                logger.warning("Invalid token format in Authorization header")
                 return jsonify({'message': 'Invalid token format'}), 401
         
         if not token:
-            logger.warning("No token provided in request")
             return jsonify({'message': 'Token is missing'}), 401
         
-        logger.debug("Verifying token")
         payload = TokenManager.verify_token(token)
         if not payload:
-            logger.warning("Token verification failed")
             return jsonify({'message': 'Invalid or expired token'}), 401
         
-        # Get user from database
-        # Check if payload contains 'id' (primary key) or 'etsy_user_id'
-        if 'id' in payload:
-            user = User.query.get(payload['id'])
-        elif 'user_id' in payload:
-            # If payload contains database ID
-            user = User.query.get(payload['user_id'])
-        elif 'etsy_user_id' in payload:
-            # If payload contains Etsy user ID
-            user = User.query.filter_by(etsy_user_id=str(payload['etsy_user_id'])).first()
-        else:
-            logger.warning("No valid user identifier in token payload")
-            return jsonify({'message': 'Invalid token payload'}), 401
+        user = User.query.get(payload['user_id'])
         
         if not user:
-            logger.warning("User not found for token")
             return jsonify({'message': 'User not found'}), 404
         
-        logger.debug(f"User authenticated: {user.etsy_user_id}")
         request.user = user
         return f(*args, **kwargs)
     
