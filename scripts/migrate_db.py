@@ -12,6 +12,35 @@ from models import db
 from flask_migrate import init as migrate_init, migrate as migrate_migrate, upgrade as migrate_upgrade
 
 
+def _resolve_migrations_dir() -> Path:
+    """Return a writable migrations directory.
+
+    Priority:
+    1) MIGRATIONS_DIR env var if set
+    2) repo-level migrations directory
+    3) /tmp/migrations as a last resort
+    """
+    candidates = []
+    env_dir = os.getenv("MIGRATIONS_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path(__file__).parent.parent / "migrations")
+    candidates.append(Path("/tmp/migrations"))
+
+    for path in candidates:
+        if path.exists():
+            if os.access(path, os.W_OK):
+                return path
+            continue
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if os.access(path, os.W_OK):
+                return path
+        except PermissionError:
+            continue
+    raise PermissionError("Unable to create a writable migrations directory; checked MIGRATIONS_DIR, repo migrations, and /tmp/migrations")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate and apply database migrations for J3D backend")
     parser.add_argument("--config", default="development", help="App config name (development, production, testing)")
@@ -26,7 +55,7 @@ def main():
 
     app = create_app(args.config)
     
-    migrations_dir = Path(__file__).parent.parent / "migrations"
+    migrations_dir = _resolve_migrations_dir()
     
     with app.app_context():
         # Initialize migrations if needed
