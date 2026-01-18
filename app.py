@@ -83,10 +83,7 @@ def create_app(config_name='development'):
             if not code_verifier:
                 return jsonify({'error': 'Missing code_verifier'}), 400
             
-            print(f"DEBUG: code_verifier from request: {code_verifier}")
-            
             # Exchange code for token
-            print(f"DEBUG: Exchanging code for token with PKCE verifier")
             token_data = EtsyOAuth.exchange_code_for_token(code, code_verifier)
             access_token = token_data['access_token']
             refresh_token = token_data.get('refresh_token')
@@ -96,9 +93,20 @@ def create_app(config_name='development'):
             user_info = EtsyOAuth.get_user_info(access_token)
             etsy_user_id = str(user_info['user_id'])
             shop_id = user_info.get('shop_id')
+            first_name = user_info.get('first_name', '')  # NEW
             
-            # Use user_id as username since login_name is not available
-            username = f"etsy_user_{etsy_user_id}"
+            # Get shop info if shop_id exists
+            shop_name = None
+            if shop_id:
+                try:
+                    shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
+                    shop_name = shop_info.get('shop_name', '')  # NEW
+                    print(f"DEBUG: Shop name: {shop_name}")
+                except Exception as e:
+                    print(f"DEBUG: Could not fetch shop info: {e}")
+            
+            # Use first_name or fallback to username
+            username = first_name if first_name else f"etsy_user_{etsy_user_id}"
             
             # Check if user exists
             user = User.query.filter_by(etsy_user_id=etsy_user_id).first()

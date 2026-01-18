@@ -179,10 +179,14 @@ class OrderSyncManager:
                     etsy_order_id=receipt_id
                 ).first()
                 
-                # Determine status
-                status = 'PAID'
-                if receipt_data.get('was_shipped'):
-                    status = 'SHIPPED'
+                # Get status directly from receipt data
+                etsy_status = receipt_data.get('status', 'open')
+                status = OrderSyncManager.normalize_status(etsy_status)
+                
+                # Track status counts for debugging
+                status_counts[status] = status_counts.get(status, 0) + 1
+                
+                print(f"DEBUG: Receipt {receipt_id} - Etsy status: '{etsy_status}' -> Internal: '{status}'")
                 
                 print(f"DEBUG: Receipt {receipt_id} - Etsy status: {etsy_status}, Final status: {status}")
                 
