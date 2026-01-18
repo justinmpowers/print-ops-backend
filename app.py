@@ -83,10 +83,10 @@ def create_app(config_name='development'):
             if not code_verifier:
                 return jsonify({'error': 'Missing code_verifier'}), 400
             
-            logger.info("Processing authorization code with PKCE")
+            print(f"DEBUG: code_verifier from request: {code_verifier}")
             
             # Exchange code for token
-            logger.info("Exchanging code for token")
+            print(f"DEBUG: Exchanging code for token with PKCE verifier")
             token_data = EtsyOAuth.exchange_code_for_token(code, code_verifier)
             access_token = token_data['access_token']
             refresh_token = token_data.get('refresh_token')
@@ -97,12 +97,8 @@ def create_app(config_name='development'):
             etsy_user_id = str(user_info['user_id'])
             shop_id = user_info.get('shop_id')
             
-            # Try to get shop name for display
-            username = f"etsy_user_{etsy_user_id}"  # default fallback
-            if shop_id:
-                shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
-                if shop_info and 'shop_name' in shop_info:
-                    username = shop_info['shop_name']
+            # Use user_id as username since login_name is not available
+            username = f"etsy_user_{etsy_user_id}"
             
             # Check if user exists
             user = User.query.filter_by(etsy_user_id=etsy_user_id).first()
@@ -112,38 +108,45 @@ def create_app(config_name='development'):
                 user.username = username  # Update name in case we got better info
                 user.access_token = access_token
                 user.refresh_token = refresh_token
-                # In oauth_callback:
                 user.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 user.updated_at = datetime.now(timezone.utc)
+                user.username = username  # NEW
+                user.first_name = first_name  # NEW
                 if shop_id:
                     user.shop_id = shop_id
+                if shop_name:
+                    user.shop_name = shop_name  # NEW
             else:
                 # Create new user
                 user = User(
                     etsy_user_id=etsy_user_id,
                     username=username,
+                    first_name=first_name,  # NEW
                     access_token=access_token,
                     refresh_token=refresh_token,
-                    # In oauth_callback:
                     token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 )
                 if shop_id:
                     user.shop_id = shop_id
+                if shop_name:
+                    user.shop_name = shop_name  # NEW
                 db.session.add(user)
             
             db.session.commit()
             
-            # Create JWT token using the DATABASE PRIMARY KEY, not etsy_user_id
-            jwt_token = TokenManager.create_token(user.id)  # ✅ Use user.id (primary key)
+            # Create JWT token
+            jwt_token = TokenManager.create_token(user.id)
             
             return jsonify({
                 'success': True,
                 'token': jwt_token,
                 'user': {
-                    'id': user.id,  # Database primary key
+                    'id': user.id,
                     'etsy_user_id': user.etsy_user_id,
                     'username': user.username,
-                    'shop_id': user.shop_id
+                    'first_name': user.first_name,  # NEW
+                    'shop_id': user.shop_id,
+                    'shop_name': user.shop_name  # NEW
                 }
             }), 200
             
