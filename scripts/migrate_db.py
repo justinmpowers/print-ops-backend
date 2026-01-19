@@ -45,12 +45,19 @@ def _resolve_migrations_dir() -> Path:
 def _clear_alembic_version():
     """Clear stale alembic_version table if it references missing revisions."""
     try:
-        with db.engine.connect() as conn:
+        with db.engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
-            conn.commit()
             print("✓ Cleared stale alembic_version table")
     except Exception as e:
         print(f"Note: Could not clear alembic_version: {e}")
+
+
+def _reinitialize_database(app_config):
+    """Clear stale alembic state and recreate database using create_all."""
+    print("Detected stale migration state. Clearing alembic_version and using create_all...")
+    _clear_alembic_version()
+    db.create_all()
+    print(f"✓ Tables created directly at {app_config['SQLALCHEMY_DATABASE_URI']}")
 
 
 def main():
@@ -107,17 +114,19 @@ def main():
             print(f"✓ Migration generated successfully")
         except Exception as e:
             error_msg = str(e)
-            print(f"✗ Migration generation failed: {error_msg}")
             
             # Check if it's a missing revision error
             if "Can't locate revision" in error_msg:
-                print("Detected stale migration state. Clearing alembic_version and using create_all...")
-                _clear_alembic_version()
-                db.create_all()
-                print(f"✓ Tables created directly at {app.config['SQLALCHEMY_DATABASE_URI']}")
+                print(f"✗ Migration generation failed: {error_msg}")
+                _reinitialize_database(app.config)
                 return 0
             
-            print("  (This is normal if no schema changes detected)")
+            # For other errors, provide context
+            print(f"✗ Migration generation failed: {error_msg}")
+            # Only show "normal" message for actual no-changes scenarios
+            if "No changes in schema detected" in error_msg.lower():
+                print("  (This is normal if no schema changes detected)")
+        
         
         # Apply migrations if requested
         if args.apply:
@@ -131,10 +140,7 @@ def main():
                 
                 # Check if it's a missing revision error
                 if "Can't locate revision" in error_msg:
-                    print("Detected stale migration state. Clearing alembic_version and using create_all...")
-                    _clear_alembic_version()
-                    db.create_all()
-                    print(f"✓ Tables created directly at {app.config['SQLALCHEMY_DATABASE_URI']}")
+                    _reinitialize_database(app.config)
                     return 0
                 
                 return 1
