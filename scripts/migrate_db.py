@@ -10,6 +10,7 @@ from config import _normalize_db_url
 from app import create_app
 from models import db
 from flask_migrate import init as migrate_init, migrate as migrate_migrate, upgrade as migrate_upgrade
+from sqlalchemy import text
 
 
 def _resolve_migrations_dir() -> Path:
@@ -41,12 +42,31 @@ def _resolve_migrations_dir() -> Path:
     raise PermissionError("Unable to create a writable migrations directory; checked MIGRATIONS_DIR, repo migrations, and /tmp/migrations")
 
 
+def _clear_alembic_version():
+    """Clear stale alembic_version table if it references missing revisions."""
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+            print("✓ Cleared stale alembic_version table")
+    except Exception as e:
+        print(f"Note: Could not clear alembic_version: {e}")
+
+
+def _reinitialize_database(app_config):
+    """Clear stale alembic state and recreate database using create_all."""
+    print("Detected stale migration state. Clearing alembic_version and using create_all...")
+    _clear_alembic_version()
+    db.create_all()
+    print(f"✓ Tables created directly at {app_config['SQLALCHEMY_DATABASE_URI']}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate and apply database migrations for J3D backend")
     parser.add_argument("--config", default="development", help="App config name (development, production, testing)")
     parser.add_argument("--url", dest="url", default=os.getenv("DATABASE_URL"), help="Database URL; defaults to env DATABASE_URL")
     parser.add_argument("--message", "-m", default="Auto-generated migration", help="Migration message")
     parser.add_argument("--apply", action="store_true", help="Apply migrations after generating")
+    parser.add_argument("--force-recreate", action="store_true", help="Drop and recreate all tables (bypasses migrations)")
     args = parser.parse_args()
 
     db_url = _normalize_db_url(args.url) if args.url else None
@@ -58,12 +78,24 @@ def main():
     migrations_dir = _resolve_migrations_dir()
     
     with app.app_context():
+        # Force recreate mode: drop everything and use create_all
+        if args.force_recreate:
+            print("Force recreate mode: dropping all tables...")
+            db.drop_all()
+            print("Creating all tables...")
+            db.create_all()
+            print(f"✓ Database recreated at {app.config['SQLALCHEMY_DATABASE_URI']}")
+            return 0
+
         env_py = migrations_dir / "env.py"
 
         # Initialize migrations if directory missing or env.py missing
         if (not migrations_dir.exists()) or (not env_py.exists()):
             print("Initializing migrations directory...")
             try:
+                # Clear any stale alembic_version that might cause conflicts
+                _clear_alembic_version()
+                
                 # Remove partial directory if it exists but is missing env.py to avoid alembic confusion
                 if migrations_dir.exists() and not env_py.exists():
                     # keep directory but re-init to generate env.py and script versions
@@ -81,8 +113,20 @@ def main():
             migrate_migrate(directory=str(migrations_dir), message=args.message)
             print(f"✓ Migration generated successfully")
         except Exception as e:
-            print(f"✗ Migration generation failed: {e}")
-            print("  (This is normal if no schema changes detected)")
+            error_msg = str(e)
+            
+            # Check if it's a missing revision error
+            if "Can't locate revision" in error_msg:
+                print(f"✗ Migration generation failed: {error_msg}")
+                _reinitialize_database(app.config)
+                return 0
+            
+            # For other errors, provide context
+            print(f"✗ Migration generation failed: {error_msg}")
+            # Only show "normal" message for actual no-changes scenarios
+            if "No changes in schema detected" in error_msg.lower():
+                print("  (This is normal if no schema changes detected)")
+        
         
         # Apply migrations if requested
         if args.apply:
@@ -91,7 +135,14 @@ def main():
                 migrate_upgrade(directory=str(migrations_dir))
                 print(f"✓ Migrations applied to {app.config['SQLALCHEMY_DATABASE_URI']}")
             except Exception as e:
-                print(f"✗ Migration upgrade failed: {e}")
+                error_msg = str(e)
+                print(f"✗ Migration upgrade failed: {error_msg}")
+                
+                # Check if it's a missing revision error
+                if "Can't locate revision" in error_msg:
+                    _reinitialize_database(app.config)
+                    return 0
+                
                 return 1
     
     print(f"\n✓ Database config={args.config} at {app.config['SQLALCHEMY_DATABASE_URI']}")
