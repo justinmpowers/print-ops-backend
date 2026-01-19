@@ -2487,4 +2487,4 @@ if __name__ == "__main__":
     app = create_app(os.getenv('FLASK_ENV', 'development'))
     # Debug mode controlled by environment configuration, never hardcoded
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-    app.run(debug=debug_mode, port=5000)
+    app.run(host='0.0.0.0', debug=debug_mode, port=5000)
