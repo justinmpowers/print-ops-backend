@@ -27,7 +27,15 @@ pipeline {
         stage('Extract Version') {
             steps {
                 script {
-                    env.VERSION = readFile('VERSION').trim()
+                    if (!fileExists('VERSION')) {
+                        error "VERSION file not found in workspace. Please ensure a VERSION file is present before running the build."
+                    }
+
+                    try {
+                        env.VERSION = readFile('VERSION').trim()
+                    } catch (err) {
+                        error "Failed to read VERSION file: ${err}"
+                    }
                     echo "Building version: ${env.VERSION}"
                 }
             }
