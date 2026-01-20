@@ -24,13 +24,17 @@ pipeline {
                 checkout scm
                 script {
                     // Extract repository name dynamically from Git remote URL
+                    // Handles both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats
                     def gitUrl = sh(returnStdout: true, script: 'git config --get remote.origin.url').trim()
-                    // Extract owner/repo from URL (handles both HTTPS and SSH URLs)
+                    
+                    // Extract owner/repo from URL:
+                    // - Matches everything after the last '/' or ':' 
+                    // - Removes optional '.git' suffix
                     def repoPath = gitUrl.replaceAll(/^.*[:\\/]([^\\/]+\/[^\\/]+?)(\.git)?$/, '$1')
                     
-                    // Validate extraction succeeded
-                    if (!repoPath || repoPath.contains('://') || !repoPath.contains('/')) {
-                        error "Failed to extract repository name from Git URL: ${gitUrl}"
+                    // Validate extraction resulted in proper 'owner/repo' format
+                    if (!repoPath || repoPath.contains('://') || !repoPath.matches(/^[^\/]+\/[^\/]+$/)) {
+                        error "Failed to extract valid repository name (owner/repo) from Git URL: ${gitUrl}. Extracted: ${repoPath}"
                     }
                     
                     env.IMAGE_NAME = repoPath
