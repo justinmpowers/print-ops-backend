@@ -3,7 +3,6 @@ pipeline {
     
     environment {
         REGISTRY = 'ghcr.io'
-        IMAGE_NAME = 'justinmpowers/j3d-backend'
     }
     
     options {
@@ -21,6 +20,14 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                script {
+                    // Extract repository name dynamically from Git remote URL
+                    def gitUrl = sh(returnStdout: true, script: 'git config --get remote.origin.url').trim()
+                    // Extract owner/repo from URL (handles both HTTPS and SSH URLs)
+                    def repoPath = gitUrl.replaceAll(/^.*[:\\/]([^\\/]+\/[^\\/]+?)(\.git)?$/, '$1')
+                    env.IMAGE_NAME = repoPath
+                    echo "Repository: ${env.IMAGE_NAME}"
+                }
             }
         }
         
