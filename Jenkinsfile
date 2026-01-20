@@ -1,10 +1,9 @@
 pipeline {
-    agent any
+    agent { label 'docker-buildx' }
     
     environment {
         REGISTRY = 'ghcr.io'
         IMAGE_NAME = 'justinmpowers/j3d-backend'
-        DOCKER_CREDENTIALS = credentials('github-container-registry')
     }
     
     options {
@@ -13,7 +12,8 @@ pipeline {
     }
     
     triggers {
-        // Trigger on GitHub push events via webhook
+        // Trigger on GitHub push events via webhook for relevant file changes
+        // Note: Path filtering must be configured in the webhook or SCM trigger configuration
         githubPush()
     }
     
@@ -44,21 +44,33 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    docker.withRegistry("https://${env.REGISTRY}", 'github-container-registry') {
-                        def imageTagVersion = "${env.REGISTRY}/${env.IMAGE_NAME}:${env.VERSION}"
-                        def imageTagLatest = "${env.REGISTRY}/${env.IMAGE_NAME}:latest"
-                        def cacheImage = "${env.REGISTRY}/${env.IMAGE_NAME}:buildcache"
+                    def imageTagVersion = "${env.REGISTRY}/${env.IMAGE_NAME}:${env.VERSION}"
 
+                    withCredentials([usernamePassword(credentialsId: 'github-container-registry', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
                         sh """
+                            # Authenticate to the container registry for buildx
+                            printf '%s' "\${DOCKER_PASSWORD}" | docker login "${env.REGISTRY}" -u "\${DOCKER_USERNAME}" --password-stdin
+
+                            # Set up cache directories
+                            CACHE_DIR=.buildx-cache
+                            NEW_CACHE_DIR=.buildx-cache-new
+
+                            mkdir -p "\${CACHE_DIR}"
+                            rm -rf "\${NEW_CACHE_DIR}"
+
+                            # Build and push the Docker image
                             docker buildx build \\
                               --platform linux/amd64,linux/arm64 \\
                               --build-arg VERSION=${env.VERSION} \\
-                              --cache-from type=registry,ref=${cacheImage} \\
-                              --cache-to type=registry,ref=${cacheImage},mode=max \\
+                              --cache-from type=local,src=\${CACHE_DIR} \\
+                              --cache-to type=local,dest=\${NEW_CACHE_DIR},mode=max \\
                               -t ${imageTagVersion} \\
-                              -t ${imageTagLatest} \\
                               --push \\
                               .
+
+                            # Rotate cache directories
+                            rm -rf "\${CACHE_DIR}"
+                            mv "\${NEW_CACHE_DIR}" "\${CACHE_DIR}"
                         """
                     }
                 }
