@@ -2,6 +2,9 @@ import requests
 from datetime import datetime, timedelta, timezone
 from flask import current_app
 from models import db, Order, OrderItem, Customer, ScheduledPrint, ProductProfile
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EtsyAPI:
     """Interact with Etsy API v3"""
@@ -241,13 +244,14 @@ class OrderSyncManager:
                 'message': f'Successfully synced {saved_count} new orders and updated {updated_count} existing orders'
             }
         
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            # Log full exception details (including stack trace) on the server
+            logger.exception("Failed to sync orders from Etsy")
+            # Return a generic error message without exposing internal details
             db.session.rollback()
             return {
                 'success': False,
-                'error': str(e),
+                'error': 'An error occurred while syncing orders from Etsy',
                 'message': 'Failed to sync orders'
             }
 
