@@ -37,12 +37,18 @@ pipeline {
             steps {
                 script {
                     docker.withRegistry("https://${env.REGISTRY}", 'github-container-registry') {
-                        def customImage = docker.build(
-                            "${env.REGISTRY}/${env.IMAGE_NAME}:${env.VERSION}",
-                            "--build-arg VERSION=${env.VERSION} ."
-                        )
-                        customImage.push()
-                        customImage.push('latest')
+                        def imageTagVersion = "${env.REGISTRY}/${env.IMAGE_NAME}:${env.VERSION}"
+                        def imageTagLatest = "${env.REGISTRY}/${env.IMAGE_NAME}:latest"
+
+                        sh """
+                            docker buildx build \\
+                              --platform linux/amd64,linux/arm64 \\
+                              --build-arg VERSION=${env.VERSION} \\
+                              -t ${imageTagVersion} \\
+                              -t ${imageTagLatest} \\
+                              --push \\
+                              .
+                        """
                     }
                 }
             }
