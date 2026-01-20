@@ -3,6 +3,8 @@ pipeline {
     
     environment {
         REGISTRY = 'ghcr.io'
+        BUILDX_CACHE_DIR = '.buildx-cache'
+        BUILDX_CACHE_NEW_DIR = '.buildx-cache-new'
     }
     
     options {
@@ -25,6 +27,12 @@ pipeline {
                     def gitUrl = sh(returnStdout: true, script: 'git config --get remote.origin.url').trim()
                     // Extract owner/repo from URL (handles both HTTPS and SSH URLs)
                     def repoPath = gitUrl.replaceAll(/^.*[:\\/]([^\\/]+\/[^\\/]+?)(\.git)?$/, '$1')
+                    
+                    // Validate extraction succeeded
+                    if (!repoPath || repoPath.contains('://') || !repoPath.contains('/')) {
+                        error "Failed to extract repository name from Git URL: ${gitUrl}"
+                    }
+                    
                     env.IMAGE_NAME = repoPath
                     echo "Repository: ${env.IMAGE_NAME}"
                 }
@@ -56,28 +64,25 @@ pipeline {
                     withCredentials([usernamePassword(credentialsId: 'github-container-registry', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
                         sh """
                             # Authenticate to the container registry for buildx
-                            printf '%s' "\${DOCKER_PASSWORD}" | docker login "${env.REGISTRY}" -u "\${DOCKER_USERNAME}" --password-stdin
+                            echo "\${DOCKER_PASSWORD}" | docker login "${env.REGISTRY}" -u "\${DOCKER_USERNAME}" --password-stdin
 
                             # Set up cache directories
-                            CACHE_DIR=.buildx-cache
-                            NEW_CACHE_DIR=.buildx-cache-new
-
-                            mkdir -p "\${CACHE_DIR}"
-                            rm -rf "\${NEW_CACHE_DIR}"
+                            mkdir -p "${env.BUILDX_CACHE_DIR}"
+                            rm -rf "${env.BUILDX_CACHE_NEW_DIR}"
 
                             # Build and push the Docker image
                             docker buildx build \\
                               --platform linux/amd64,linux/arm64 \\
                               --build-arg VERSION=${env.VERSION} \\
-                              --cache-from type=local,src=\${CACHE_DIR} \\
-                              --cache-to type=local,dest=\${NEW_CACHE_DIR},mode=max \\
+                              --cache-from type=local,src=${env.BUILDX_CACHE_DIR} \\
+                              --cache-to type=local,dest=${env.BUILDX_CACHE_NEW_DIR},mode=max \\
                               -t ${imageTagVersion} \\
                               --push \\
                               .
 
                             # Rotate cache directories
-                            rm -rf "\${CACHE_DIR}"
-                            mv "\${NEW_CACHE_DIR}" "\${CACHE_DIR}"
+                            rm -rf "${env.BUILDX_CACHE_DIR}"
+                            mv "${env.BUILDX_CACHE_NEW_DIR}" "${env.BUILDX_CACHE_DIR}"
                         """
                     }
                 }
