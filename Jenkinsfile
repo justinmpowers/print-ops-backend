@@ -47,11 +47,14 @@ pipeline {
                     docker.withRegistry("https://${env.REGISTRY}", 'github-container-registry') {
                         def imageTagVersion = "${env.REGISTRY}/${env.IMAGE_NAME}:${env.VERSION}"
                         def imageTagLatest = "${env.REGISTRY}/${env.IMAGE_NAME}:latest"
+                        def cacheImage = "${env.REGISTRY}/${env.IMAGE_NAME}:buildcache"
 
                         sh """
                             docker buildx build \\
                               --platform linux/amd64,linux/arm64 \\
                               --build-arg VERSION=${env.VERSION} \\
+                              --cache-from type=registry,ref=${cacheImage} \\
+                              --cache-to type=registry,ref=${cacheImage},mode=max \\
                               -t ${imageTagVersion} \\
                               -t ${imageTagLatest} \\
                               --push \\
