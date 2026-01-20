@@ -3,7 +3,7 @@ import requests
 import smtplib
 import logging
 from email.message import EmailMessage
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, session, send_from_directory, abort
 from werkzeug.utils import secure_filename
@@ -1930,8 +1930,15 @@ def create_app(config_name='development'):
                 if location == 'auto':
                     # Get location from IP (simplified)
                     location = 'New York,US'
-                
-                weather_url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}'
+
+                # Validate and encode location to prevent partial SSRF via query manipulation
+                # Allow only reasonable characters for a city/country string
+                import re
+                if not re.fullmatch(r"[a-zA-Z0-9 ,._-]{1,100}", location):
+                    return jsonify({'error': 'Invalid location parameter'}), 400
+
+                encoded_location = quote(location, safe='')
+                weather_url = f'http://api.openweathermap.org/data/2.5/weather?q={encoded_location}&appid={api_key}'
                 response = requests.get(weather_url, timeout=5)
                 response.raise_for_status()
                 weather_data = response.json()
