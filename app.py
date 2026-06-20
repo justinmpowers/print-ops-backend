@@ -25,7 +25,10 @@ migrate = Migrate()
 def create_app(config_name='development'):
     """Application factory"""
     app = Flask(__name__)
-    
+
+    # Temporary: enable debug logging to diagnose OAuth token response
+    logging.basicConfig(level=logging.DEBUG)
+
     # Load configuration
     app.config.from_object(config[config_name])
 
