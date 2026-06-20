@@ -91,11 +91,11 @@ def create_app(config_name='development'):
             expires_in = token_data.get('expires_in', 3600)
             etsy_user_id = token_data['user_id']
 
-            # --- Step 1: Resolve shop (public endpoint, always works) ---
+            # --- Step 1: Resolve shop ---
             shop_id = None
             shop_name = None
             try:
-                shop = EtsyOAuth.get_shop_for_user(etsy_user_id)
+                shop = EtsyOAuth.get_shop_for_user(etsy_user_id, access_token)
                 if shop:
                     shop_id = shop.get('shop_id')
                     shop_name = shop.get('shop_name', '')
@@ -248,7 +248,7 @@ def create_app(config_name='development'):
             if not user.shop_id:
                 logger.info(f"shop_id missing for user {user.etsy_user_id}, attempting shop lookup")
                 try:
-                    shop = EtsyOAuth.get_shop_for_user(user.etsy_user_id)
+                    shop = EtsyOAuth.get_shop_for_user(user.etsy_user_id, user.access_token)
                     if shop:
                         user.shop_id = shop.get('shop_id')
                         user.shop_name = shop.get('shop_name', user.shop_name)
