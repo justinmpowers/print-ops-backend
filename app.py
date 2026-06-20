@@ -177,7 +177,44 @@ def create_app(config_name='development'):
     def get_user():
         """Get current authenticated user"""
         return jsonify(request.user.to_dict()), 200
-    
+
+    @app.route('/api/auth/link-shop', methods=['POST'])
+    @token_required
+    def link_shop():
+        """Link the authenticated user's Etsy shop by shop name.
+
+        The public findShops endpoint is reliable for all app states (draft or live).
+        We verify the shop belongs to this user by comparing shop.user_id.
+        """
+        user = request.user
+        shop_name = (request.json or {}).get('shop_name', '').strip()
+        if not shop_name:
+            return jsonify({'error': 'shop_name is required'}), 400
+
+        response = requests.get(
+            EtsyOAuth.ETSY_SHOPS_URL,
+            headers={'x-api-key': current_app.config['ETSY_CLIENT_ID']},
+            params={'shop_name': shop_name, 'limit': 1},
+            timeout=10
+        )
+        if not response.ok:
+            logger.error(f"[link_shop] Etsy API {response.status_code}: {response.text[:200]}")
+            return jsonify({'error': 'Could not reach Etsy API'}), 502
+
+        results = response.json().get('results', [])
+        if not results:
+            return jsonify({'error': f'No Etsy shop found with name "{shop_name}"'}), 404
+
+        shop = results[0]
+        if str(shop.get('user_id')) != str(user.etsy_user_id):
+            return jsonify({'error': 'That shop does not belong to your Etsy account'}), 403
+
+        user.shop_id = shop['shop_id']
+        user.shop_name = shop.get('shop_name', shop_name)
+        db.session.commit()
+        logger.info(f"Linked shop {user.shop_name} (id={user.shop_id}) for user {user.etsy_user_id}")
+        return jsonify({'shop_id': user.shop_id, 'shop_name': user.shop_name}), 200
+
     # ==================== ORDER ROUTES ====================
     @app.route('/api/orders/sync', methods=['POST'])
     @token_required
@@ -1976,9 +2013,10 @@ def create_app(config_name='development'):
     # ==================== BAMBU CONNECT - MATERIALS ====================
     @app.route('/api/bambu/materials/<int:printer_id>', methods=['GET'])
     @token_required
-    def get_printer_materials(user_id, printer_id):
+    def get_printer_materials(printer_id):
         """Get materials loaded on Bambu printer"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -1990,9 +2028,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/materials/<int:printer_id>', methods=['POST'])
     @token_required
-    def add_printer_material(user_id, printer_id):
+    def add_printer_material(printer_id):
         """Add material to Bambu printer slot"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -2018,9 +2057,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/materials/<int:material_id>', methods=['PUT'])
     @token_required
-    def update_printer_material(user_id, material_id):
+    def update_printer_material(material_id):
         """Update material remaining percentage"""
         try:
+            user_id = request.user.id
             material = BambuMaterial.query.get_or_404(material_id)
             printer = Printer.query.get(material.printer_id)
             if printer.user_id != user_id:
@@ -2047,9 +2087,10 @@ def create_app(config_name='development'):
     # ==================== BAMBU CONNECT - NOTIFICATIONS ====================
     @app.route('/api/bambu/notifications/<int:printer_id>', methods=['GET'])
     @token_required
-    def get_printer_notifications(user_id, printer_id):
+    def get_printer_notifications(printer_id):
         """Get notification preferences for printer"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -2075,9 +2116,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/notifications/<int:printer_id>', methods=['PUT'])
     @token_required
-    def update_printer_notifications(user_id, printer_id):
+    def update_printer_notifications(printer_id):
         """Update notification preferences"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -2113,9 +2155,10 @@ def create_app(config_name='development'):
     # ==================== BAMBU CONNECT - PRINT SCHEDULING ====================
     @app.route('/api/bambu/scheduled-prints/<int:printer_id>', methods=['GET'])
     @token_required
-    def get_scheduled_prints(user_id, printer_id):
+    def get_scheduled_prints(printer_id):
         """Get scheduled print jobs for printer"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -2139,9 +2182,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/scheduled-prints', methods=['POST'])
     @token_required
-    def create_scheduled_print(user_id):
+    def create_scheduled_print():
         """Create a scheduled print job"""
         try:
+            user_id = request.user.id
             data = request.json
             printer_id = data.get('printer_id')
             
@@ -2175,9 +2219,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/scheduled-prints/<int:print_id>', methods=['PUT'])
     @token_required
-    def update_scheduled_print(user_id, print_id):
+    def update_scheduled_print(print_id):
         """Update scheduled print job"""
         try:
+            user_id = request.user.id
             scheduled_print = ScheduledPrint.query.get_or_404(print_id)
             printer = Printer.query.get(scheduled_print.printer_id)
             if printer.user_id != user_id:
@@ -2212,9 +2257,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/scheduled-prints/<int:print_id>', methods=['DELETE'])
     @token_required
-    def delete_scheduled_print(user_id, print_id):
+    def delete_scheduled_print(print_id):
         """Cancel/delete scheduled print job"""
         try:
+            user_id = request.user.id
             scheduled_print = ScheduledPrint.query.get_or_404(print_id)
             printer = Printer.query.get(scheduled_print.printer_id)
             if printer.user_id != user_id:
@@ -2230,9 +2276,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/bambu/scheduled-prints/<int:printer_id>/queue', methods=['GET'])
     @token_required
-    def get_print_queue(user_id, printer_id):
+    def get_print_queue(printer_id):
         """Get current print queue (queued and scheduled statuses)"""
         try:
+            user_id = request.user.id
             printer = Printer.query.get_or_404(printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
@@ -2252,9 +2299,10 @@ def create_app(config_name='development'):
     
     @app.route('/api/orders/<int:order_id>/schedule-prints', methods=['POST'])
     @token_required
-    def schedule_order_for_print(user_id, order_id):
+    def schedule_order_for_print(order_id):
         """Schedule all items in an order for printing"""
         try:
+            user_id = request.user.id
             order = Order.query.get_or_404(order_id)
             if order.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
