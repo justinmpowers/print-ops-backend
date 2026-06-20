@@ -91,71 +91,56 @@ def create_app(config_name='development'):
             expires_in = token_data.get('expires_in', 3600)
             etsy_user_id = token_data['user_id']
 
-            # Get user profile (first_name, login_name, shop_id, etc.)
-            # The profile endpoint requires profile_r and may 403 on draft apps.
-            # Fall back to /shops?user_id= (shops_r scope) to at least get the shop.
-            first_name = ''
-            login_name = ''
+            # --- Step 1: Resolve shop (public endpoint, always works) ---
             shop_id = None
             shop_name = None
             try:
-                user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
-                first_name = user_info.get('first_name', '')
-                login_name = user_info.get('login_name', '')
-                shop_id = user_info.get('shop_id')
+                shop = EtsyOAuth.get_shop_for_user(etsy_user_id)
+                if shop:
+                    shop_id = shop.get('shop_id')
+                    shop_name = shop.get('shop_name', '')
+                    logger.info(f"Resolved shop: {shop_name} (id={shop_id})")
+                else:
+                    logger.warning(f"No shop found for etsy_user_id={etsy_user_id}")
             except Exception as e:
-                logger.warning(f"Could not fetch Etsy user profile for {etsy_user_id}: {e}")
+                logger.error(f"Shop lookup failed for {etsy_user_id}: {e}")
 
-            if not shop_id:
-                try:
-                    shop = EtsyOAuth.get_shop_by_user(access_token, etsy_user_id)
-                    if shop:
-                        shop_id = shop.get('shop_id')
-                        shop_name = shop.get('shop_name', '')
-                        logger.info(f"Resolved shop via fallback: {shop_name} (id={shop_id})")
-                except Exception as e:
-                    logger.warning(f"Could not resolve shop for {etsy_user_id}: {e}")
+            # --- Step 2: Fetch profile (optional — 403s on draft apps) ---
+            first_name = ''
+            login_name = ''
+            try:
+                profile = EtsyOAuth.get_user_profile(access_token, etsy_user_id)
+                first_name = profile.get('first_name', '')
+                login_name = profile.get('login_name', '')
+            except Exception as e:
+                logger.info(f"Profile unavailable for {etsy_user_id} (draft app?): {e}")
 
-            if shop_id and not shop_name:
-                try:
-                    shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
-                    shop_name = shop_info.get('shop_name', '')
-                except Exception:
-                    pass
-
-            # Prefer first_name, then Etsy login_name, then a readable fallback
             username = first_name or login_name or f"Seller {etsy_user_id}"
-            
-            # Check if user exists
+
+            # --- Step 3: Persist user ---
             user = User.query.filter_by(etsy_user_id=etsy_user_id).first()
-            
             if user:
-                # Update existing user
-                user.username = username  # Update name in case we got better info
                 user.access_token = access_token
                 user.refresh_token = refresh_token
                 user.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 user.updated_at = datetime.now(timezone.utc)
-                user.username = username  # NEW
-                user.first_name = first_name  # NEW
+                user.username = username
+                user.first_name = first_name
                 if shop_id:
                     user.shop_id = shop_id
                 if shop_name:
-                    user.shop_name = shop_name  # NEW
+                    user.shop_name = shop_name
             else:
-                # Create new user
                 user = User(
                     etsy_user_id=etsy_user_id,
                     username=username,
-                    first_name=first_name,  # NEW
+                    first_name=first_name,
                     access_token=access_token,
                     refresh_token=refresh_token,
-                    token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+                    token_expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+                    shop_id=shop_id,
+                    shop_name=shop_name
                 )
-                if shop_id:
-                    user.shop_id = shop_id
-                if shop_name:
-                    user.shop_name = shop_name  # NEW
                 db.session.add(user)
             
             db.session.commit()
@@ -223,15 +208,13 @@ def create_app(config_name='development'):
                     db.session.commit()
                     logger.info("Token refreshed successfully")
             
-            # Check if user has a shop_id
             if not user.shop_id:
-                logger.warning("No shop_id found for user")
-                return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in to re-authorize.'}), 422
-            
+                return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in.'}), 422
+
             logger.info("Initializing Etsy API")
             # Initialize Etsy API
             etsy_api = EtsyAPI(user.access_token)
-            
+
             shop_id = user.shop_id
             logger.info(f"Starting order sync for shop_id: {shop_id}")
             
