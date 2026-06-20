@@ -14,7 +14,7 @@ class EtsyAPI:
         self.base_url = current_app.config['ETSY_API_BASE_URL']
         self.headers = {
             'Authorization': f'Bearer {access_token}',
-            'x-api-key': current_app.config['ETSY_CLIENT_ID']
+            'x-api-key': f"{current_app.config['ETSY_CLIENT_ID']}:{current_app.config['ETSY_CLIENT_SECRET']}"
         }
     
     def _make_request(self, method, endpoint, **kwargs):
