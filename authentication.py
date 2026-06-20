@@ -93,7 +93,7 @@ class EtsyOAuth:
         url = EtsyOAuth.ETSY_USER_URL.format(user_id=user_id)
         response = requests.get(url, headers={
             'Authorization': f'Bearer {access_token}',
-            'x-api-key': current_app.config['ETSY_CLIENT_ID']
+            'x-api-key': current_app.config['ETSY_CLIENT_SECRET']
         })
         if not response.ok:
             logger.warning(f"[get_user_profile] {response.status_code}: {response.text[:200]}")
@@ -113,7 +113,7 @@ class EtsyOAuth:
             url,
             headers={
                 'Authorization': f'Bearer {access_token}',
-                'x-api-key': current_app.config['ETSY_CLIENT_ID'],
+                'x-api-key': current_app.config['ETSY_CLIENT_SECRET'],
             },
             timeout=10
         )
