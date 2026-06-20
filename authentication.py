@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import jwt
 import secrets
@@ -45,6 +46,17 @@ class EtsyOAuth:
         return f"{EtsyOAuth.ETSY_AUTH_URL}?{urlencode(params)}", state, code_verifier
     
     @staticmethod
+    def _decode_user_id(access_token):
+        """Extract user_id from Etsy's JWT access token without signature verification."""
+        try:
+            payload_b64 = access_token.split('.')[1]
+            payload_b64 += '=' * (-len(payload_b64) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+            return str(claims.get('user_id') or claims.get('sub', ''))
+        except Exception:
+            return None
+
+    @staticmethod
     def exchange_code_for_token(code, code_verifier=None):
         """Exchange authorization code for access token with PKCE"""
         data = {
@@ -59,11 +71,14 @@ class EtsyOAuth:
             data['code_verifier'] = code_verifier
         else:
             data['client_secret'] = current_app.config['ETSY_CLIENT_SECRET']
-        
+
         try:
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             response.raise_for_status()
-            return response.json()
+            token_data = response.json()
+            if not token_data.get('user_id'):
+                token_data['user_id'] = EtsyOAuth._decode_user_id(token_data['access_token'])
+            return token_data
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to exchange code for token: {str(e)}")
     
