@@ -20,6 +20,7 @@ class EtsyOAuth:
     ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
     ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/{user_id}'
     ETSY_SHOPS_URL = 'https://api.etsy.com/v3/application/shops'
+    ETSY_USER_SHOPS_URL = 'https://api.etsy.com/v3/application/users/{user_id}/shops'
     
     @staticmethod
     def get_authorization_url():
@@ -100,17 +101,20 @@ class EtsyOAuth:
         return response.json()
 
     @staticmethod
-    def get_shop_for_user(user_id):
+    def get_shop_for_user(user_id, access_token):
         """Return the first Etsy shop owned by user_id.
 
-        Uses the public findShops endpoint which requires only the API key —
-        no OAuth bearer token. This works for all apps including draft/unverified.
-        Raises on network failure; returns None when the user has no shops.
+        Uses GET /v3/application/users/{user_id}/shops which requires the
+        OAuth bearer token. Raises on network failure; returns None when the
+        user has no shops.
         """
+        url = EtsyOAuth.ETSY_USER_SHOPS_URL.format(user_id=user_id)
         response = requests.get(
-            EtsyOAuth.ETSY_SHOPS_URL,
-            headers={'x-api-key': current_app.config['ETSY_CLIENT_ID']},
-            params={'user_id': user_id, 'limit': 1},
+            url,
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'x-api-key': current_app.config['ETSY_CLIENT_ID'],
+            },
             timeout=10
         )
         if not response.ok:
