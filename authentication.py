@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 import requests
 import jwt
@@ -49,22 +48,6 @@ class EtsyOAuth:
         return f"{EtsyOAuth.ETSY_AUTH_URL}?{urlencode(params)}", state, code_verifier
     
     @staticmethod
-    def _decode_user_id(access_token):
-        """Extract user_id from Etsy access token.
-
-        Etsy v3 tokens use the format {user_id}.{binary_signature}, so the
-        numeric user_id sits in the first segment before the dot.
-        """
-        try:
-            first = access_token.split('.')[0]
-            if first.isdigit():
-                logger.debug(f"[_decode_user_id] extracted user_id from token prefix: {first}")
-                return first
-        except Exception as e:
-            logger.debug(f"[_decode_user_id] failed: {e}")
-        return None
-
-    @staticmethod
     def exchange_code_for_token(code, code_verifier=None):
         """Exchange authorization code for access token with PKCE"""
         data = {
@@ -84,10 +67,16 @@ class EtsyOAuth:
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             response.raise_for_status()
             token_data = response.json()
-            logger.debug(f"[exchange_code_for_token] token_data keys: {list(token_data.keys())}, user_id value: {token_data.get('user_id')!r}")
-            if not token_data.get('user_id'):
-                token_data['user_id'] = EtsyOAuth._decode_user_id(token_data['access_token'])
-            logger.debug(f"[exchange_code_for_token] resolved user_id: {token_data.get('user_id')!r}")
+
+            # Etsy's token response includes user_id but it can be null.
+            # The documented method (per Etsy's own quickstart) is to extract
+            # the numeric prefix from the access token: "{user_id}.{opaque}"
+            access_token = token_data['access_token']
+            user_id = access_token.split('.')[0]
+            if not user_id.isdigit():
+                raise Exception(f"Could not extract user_id from access token prefix: {user_id!r}")
+            token_data['user_id'] = user_id
+
             return token_data
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to exchange code for token: {str(e)}")
