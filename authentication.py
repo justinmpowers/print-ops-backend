@@ -33,7 +33,7 @@ class EtsyOAuth:
             'response_type': 'code',
             'client_id': current_app.config['ETSY_CLIENT_ID'],
             'redirect_uri': current_app.config['ETSY_REDIRECT_URI'],
-            'scope': 'transactions_r shops_r email_r',  # Added email_r and shops_r
+            'scope': 'transactions_r shops_r email_r profile_r',
             'state': state,
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256'
@@ -50,13 +50,15 @@ class EtsyOAuth:
         data = {
             'grant_type': 'authorization_code',
             'client_id': current_app.config['ETSY_CLIENT_ID'],
-            'client_secret': current_app.config['ETSY_CLIENT_SECRET'],
             'redirect_uri': current_app.config['ETSY_REDIRECT_URI'],
             'code': code
         }
-        
+
         if code_verifier:
+            # PKCE flow: code_verifier replaces client_secret
             data['code_verifier'] = code_verifier
+        else:
+            data['client_secret'] = current_app.config['ETSY_CLIENT_SECRET']
         
         try:
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
