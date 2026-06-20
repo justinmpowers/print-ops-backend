@@ -91,6 +91,8 @@ class EtsyOAuth:
         url = EtsyOAuth.ETSY_USER_URL.format(user_id=user_id)
         try:
             response = requests.get(url, headers=headers)
+            if not response.ok:
+                logger.warning(f"[get_user_info] {response.status_code} for {url}: {response.text[:200]}")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
