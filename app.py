@@ -88,10 +88,10 @@ def create_app(config_name='development'):
             access_token = token_data['access_token']
             refresh_token = token_data.get('refresh_token')
             expires_in = token_data.get('expires_in', 3600)
-            
-            # Get user info
-            user_info = EtsyOAuth.get_user_info(access_token)
-            etsy_user_id = str(user_info['user_id'])
+            etsy_user_id = str(token_data['user_id'])
+
+            # Get user profile (first_name, shop_id, etc.)
+            user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
             shop_id = user_info.get('shop_id')
             first_name = user_info.get('first_name', '')  # NEW
             
