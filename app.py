@@ -92,7 +92,8 @@ def create_app(config_name='development'):
             etsy_user_id = token_data['user_id']
 
             # Get user profile (first_name, login_name, shop_id, etc.)
-            # This endpoint requires profile_r scope and may be restricted on draft apps.
+            # The profile endpoint requires profile_r and may 403 on draft apps.
+            # Fall back to /shops?user_id= (shops_r scope) to at least get the shop.
             first_name = ''
             login_name = ''
             shop_id = None
@@ -102,14 +103,25 @@ def create_app(config_name='development'):
                 first_name = user_info.get('first_name', '')
                 login_name = user_info.get('login_name', '')
                 shop_id = user_info.get('shop_id')
-                if shop_id:
-                    try:
-                        shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
-                        shop_name = shop_info.get('shop_name', '')
-                    except Exception:
-                        pass
             except Exception as e:
                 logger.warning(f"Could not fetch Etsy user profile for {etsy_user_id}: {e}")
+
+            if not shop_id:
+                try:
+                    shop = EtsyOAuth.get_shop_by_user(access_token, etsy_user_id)
+                    if shop:
+                        shop_id = shop.get('shop_id')
+                        shop_name = shop.get('shop_name', '')
+                        logger.info(f"Resolved shop via fallback: {shop_name} (id={shop_id})")
+                except Exception as e:
+                    logger.warning(f"Could not resolve shop for {etsy_user_id}: {e}")
+
+            if shop_id and not shop_name:
+                try:
+                    shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
+                    shop_name = shop_info.get('shop_name', '')
+                except Exception:
+                    pass
 
             # Prefer first_name, then Etsy login_name, then a readable fallback
             username = first_name or login_name or f"Seller {etsy_user_id}"
@@ -214,7 +226,7 @@ def create_app(config_name='development'):
             # Check if user has a shop_id
             if not user.shop_id:
                 logger.warning("No shop_id found for user")
-                return jsonify({'error': 'No shop associated with this account'}), 404
+                return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in to re-authorize.'}), 422
             
             logger.info("Initializing Etsy API")
             # Initialize Etsy API
@@ -1718,7 +1730,7 @@ def create_app(config_name='development'):
                 db.session.commit()
             
             if not current_user.shop_id:
-                return jsonify({'error': 'No shop associated with account'}), 404
+                return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in to re-authorize.'}), 422
             
             # Fetch recent conversations (Etsy API v3: /shops/{shop_id}/conversations)
             headers = {
