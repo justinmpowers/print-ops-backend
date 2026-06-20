@@ -15,7 +15,7 @@ class EtsyOAuth:
     
     ETSY_AUTH_URL = 'https://www.etsy.com/oauth/connect'
     ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
-    ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/me'
+    ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/{user_id}'
     
     @staticmethod
     def get_authorization_url():
@@ -68,15 +68,15 @@ class EtsyOAuth:
             raise Exception(f"Failed to exchange code for token: {str(e)}")
     
     @staticmethod
-    def get_user_info(access_token):
+    def get_user_info(access_token, user_id):
         """Get authenticated user info from Etsy"""
         headers = {
             'Authorization': f'Bearer {access_token}',
             'x-api-key': current_app.config['ETSY_CLIENT_ID']
         }
-        
+        url = EtsyOAuth.ETSY_USER_URL.format(user_id=user_id)
         try:
-            response = requests.get(EtsyOAuth.ETSY_USER_URL, headers=headers)
+            response = requests.get(url, headers=headers)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
