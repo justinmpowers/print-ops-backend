@@ -1,9 +1,6 @@
 name: Build and Push Docker Image
 
 on:
-  pull_request:
-    branches:
-      - main
   push:
     branches:
       - main
@@ -49,7 +46,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=pr
             type=semver,pattern={{version}},value=${{ steps.version.outputs.VERSION }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.VERSION }}
 
