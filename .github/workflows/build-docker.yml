@@ -16,31 +16,20 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Bump patch version (main only)
+      - name: Compute version
         id: version
         run: |
-          VERSION=$(cat VERSION)
-          if [ "${{ github.event_name }}" = "push" ]; then
-            MAJOR=$(echo $VERSION | cut -d. -f1)
-            MINOR=$(echo $VERSION | cut -d. -f2)
-            PATCH=$(echo $VERSION | cut -d. -f3)
-            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-            echo "$VERSION" > VERSION
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add VERSION
-            git commit -m "chore: bump version to $VERSION [skip ci]"
-            git push
-          fi
+          BASE=$(cat VERSION)
+          MAJOR=$(echo $BASE | cut -d. -f1)
+          MINOR=$(echo $BASE | cut -d. -f2)
+          VERSION="$MAJOR.$MINOR.${{ github.run_number }}"
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
