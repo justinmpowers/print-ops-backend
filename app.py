@@ -246,7 +246,19 @@ def create_app(config_name='development'):
                     logger.info("Token refreshed successfully")
             
             if not user.shop_id:
-                return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in.'}), 422
+                logger.info(f"shop_id missing for user {user.etsy_user_id}, attempting shop lookup")
+                try:
+                    shop = EtsyOAuth.get_shop_for_user(user.etsy_user_id)
+                    if shop:
+                        user.shop_id = shop.get('shop_id')
+                        user.shop_name = shop.get('shop_name', user.shop_name)
+                        db.session.commit()
+                        logger.info(f"Recovered shop_id={user.shop_id} for user {user.etsy_user_id}")
+                    else:
+                        return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in.'}), 422
+                except Exception as shop_err:
+                    logger.error(f"Shop lookup recovery failed: {shop_err}")
+                    return jsonify({'error': 'No Etsy shop linked to this account. Please log out and log back in.'}), 422
 
             logger.info("Initializing Etsy API")
             # Initialize Etsy API
