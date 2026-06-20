@@ -92,18 +92,22 @@ def create_app(config_name='development'):
             etsy_user_id = token_data['user_id']
 
             # Get user profile (first_name, shop_id, etc.)
-            user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
-            shop_id = user_info.get('shop_id')
-            first_name = user_info.get('first_name', '')  # NEW
-            
-            # Get shop info if shop_id exists
+            # This endpoint is restricted on draft/unverified Etsy apps — treat as optional.
+            first_name = ''
+            shop_id = None
             shop_name = None
-            if shop_id:
-                try:
-                    shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
-                    shop_name = shop_info.get('shop_name', '')
-                except Exception as e:
-                    pass  # Silently ignore shop info fetch errors
+            try:
+                user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
+                first_name = user_info.get('first_name', '')
+                shop_id = user_info.get('shop_id')
+                if shop_id:
+                    try:
+                        shop_info = EtsyOAuth.get_shop_info(access_token, shop_id)
+                        shop_name = shop_info.get('shop_name', '')
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning(f"Could not fetch Etsy user profile for {etsy_user_id}: {e}")
             
             # Use first_name or fallback to username
             username = first_name if first_name else f"etsy_user_{etsy_user_id}"
