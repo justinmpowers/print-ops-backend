@@ -83,43 +83,41 @@ class EtsyOAuth:
             raise Exception(f"Failed to exchange code for token: {str(e)}")
     
     @staticmethod
-    def get_user_info(access_token, user_id):
-        """Get authenticated user info from Etsy"""
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'x-api-key': current_app.config['ETSY_CLIENT_ID']
-        }
+    def get_user_profile(access_token, user_id):
+        """Get profile info (first_name, login_name) for the authenticated user.
+
+        Requires profile_r scope. May 403 on draft/unverified Etsy apps — callers
+        must treat this as optional and not depend on it for core functionality.
+        """
         url = EtsyOAuth.ETSY_USER_URL.format(user_id=user_id)
-        try:
-            response = requests.get(url, headers=headers)
-            if not response.ok:
-                logger.warning(f"[get_user_info] {response.status_code} for {url}: {response.text[:200]}")
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to get user info: {str(e)}")
-    
-    @staticmethod
-    def get_shop_by_user(access_token, user_id):
-        """Fetch the first shop for a user via shops_r scope (works on draft apps)."""
-        headers = {
+        response = requests.get(url, headers={
             'Authorization': f'Bearer {access_token}',
             'x-api-key': current_app.config['ETSY_CLIENT_ID']
-        }
-        try:
-            response = requests.get(
-                EtsyOAuth.ETSY_SHOPS_URL,
-                headers=headers,
-                params={'user_id': user_id, 'limit': 1}
-            )
-            if not response.ok:
-                logger.warning(f"[get_shop_by_user] {response.status_code}: {response.text[:200]}")
-                response.raise_for_status()
-            data = response.json()
-            results = data.get('results', [])
-            return results[0] if results else None
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to get shop by user: {str(e)}")
+        })
+        if not response.ok:
+            logger.warning(f"[get_user_profile] {response.status_code}: {response.text[:200]}")
+            response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def get_shop_for_user(user_id):
+        """Return the first Etsy shop owned by user_id.
+
+        Uses the public findShops endpoint which requires only the API key —
+        no OAuth bearer token. This works for all apps including draft/unverified.
+        Raises on network failure; returns None when the user has no shops.
+        """
+        response = requests.get(
+            EtsyOAuth.ETSY_SHOPS_URL,
+            headers={'x-api-key': current_app.config['ETSY_CLIENT_ID']},
+            params={'user_id': user_id, 'limit': 1},
+            timeout=10
+        )
+        if not response.ok:
+            logger.error(f"[get_shop_for_user] {response.status_code}: {response.text[:200]}")
+            response.raise_for_status()
+        results = response.json().get('results', [])
+        return results[0] if results else None
 
     @staticmethod
     def refresh_access_token(refresh_token):
