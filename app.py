@@ -91,14 +91,16 @@ def create_app(config_name='development'):
             expires_in = token_data.get('expires_in', 3600)
             etsy_user_id = token_data['user_id']
 
-            # Get user profile (first_name, shop_id, etc.)
-            # This endpoint is restricted on draft/unverified Etsy apps — treat as optional.
+            # Get user profile (first_name, login_name, shop_id, etc.)
+            # This endpoint requires profile_r scope and may be restricted on draft apps.
             first_name = ''
+            login_name = ''
             shop_id = None
             shop_name = None
             try:
                 user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
                 first_name = user_info.get('first_name', '')
+                login_name = user_info.get('login_name', '')
                 shop_id = user_info.get('shop_id')
                 if shop_id:
                     try:
@@ -108,9 +110,9 @@ def create_app(config_name='development'):
                         pass
             except Exception as e:
                 logger.warning(f"Could not fetch Etsy user profile for {etsy_user_id}: {e}")
-            
-            # Use first_name or fallback to username
-            username = first_name if first_name else f"etsy_user_{etsy_user_id}"
+
+            # Prefer first_name, then Etsy login_name, then a readable fallback
+            username = first_name or login_name or f"Seller {etsy_user_id}"
             
             # Check if user exists
             user = User.query.filter_by(etsy_user_id=etsy_user_id).first()
@@ -2300,7 +2302,7 @@ def create_app(config_name='development'):
     @app.route('/api/health', methods=['GET'])
     def health_check():
         """Health check endpoint"""
-        return jsonify({'status': 'healthy'}), 200
+        return jsonify({'status': 'healthy', 'version': os.getenv('APP_VERSION', 'dev')}), 200
     
     # Error handlers
     @app.route('/uploads/<path:filename>')

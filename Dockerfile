@@ -1,5 +1,5 @@
 # Multi-stage build for Python backend
-ARG VERSION
+ARG VERSION=dev
 FROM python:3.11-slim as builder
 
 # Set working directory
@@ -42,12 +42,16 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # Create necessary directories
 RUN mkdir -p /app/data /app/instance && chown -R appuser:appuser /app/data /app/instance
 
+# Redeclare ARG after FROM so it's available in this stage
+ARG VERSION=dev
+
 # Set environment variables
 ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     FLASK_CONFIG=production \
-    AUTO_MIGRATE=1
+    AUTO_MIGRATE=1 \
+    APP_VERSION=${VERSION}
 
 # Add labels for container metadata
 LABEL version="${VERSION}" \
