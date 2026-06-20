@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import requests
 import jwt
 import secrets
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from flask import current_app, request, jsonify, session
 from models import db, User
+
+logger = logging.getLogger(__name__)
 
 class EtsyOAuth:
     """Handle Etsy 3-legged OAuth authentication"""
@@ -49,11 +52,15 @@ class EtsyOAuth:
     def _decode_user_id(access_token):
         """Extract user_id from Etsy's JWT access token without signature verification."""
         try:
-            payload_b64 = access_token.split('.')[1]
+            parts = access_token.split('.')
+            logger.debug(f"[_decode_user_id] token parts count: {len(parts)}, starts with eyJ: {access_token.startswith('eyJ')}")
+            payload_b64 = parts[1]
             payload_b64 += '=' * (-len(payload_b64) % 4)
             claims = json.loads(base64.urlsafe_b64decode(payload_b64))
+            logger.debug(f"[_decode_user_id] JWT claims keys: {list(claims.keys())}")
             return str(claims.get('user_id') or claims.get('sub', ''))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[_decode_user_id] failed: {e}")
             return None
 
     @staticmethod
@@ -76,8 +83,10 @@ class EtsyOAuth:
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             response.raise_for_status()
             token_data = response.json()
+            logger.debug(f"[exchange_code_for_token] token_data keys: {list(token_data.keys())}")
             if not token_data.get('user_id'):
                 token_data['user_id'] = EtsyOAuth._decode_user_id(token_data['access_token'])
+            logger.debug(f"[exchange_code_for_token] resolved user_id: {token_data.get('user_id')}")
             return token_data
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to exchange code for token: {str(e)}")
