@@ -15,10 +15,11 @@ logger = logging.getLogger(__name__)
 
 class EtsyOAuth:
     """Handle Etsy 3-legged OAuth authentication"""
-    
+
     ETSY_AUTH_URL = 'https://www.etsy.com/oauth/connect'
     ETSY_TOKEN_URL = 'https://api.etsy.com/v3/public/oauth/token'
     ETSY_USER_URL = 'https://api.etsy.com/v3/application/users/{user_id}'
+    ETSY_SHOPS_URL = 'https://api.etsy.com/v3/application/shops'
     
     @staticmethod
     def get_authorization_url():
@@ -98,6 +99,28 @@ class EtsyOAuth:
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to get user info: {str(e)}")
     
+    @staticmethod
+    def get_shop_by_user(access_token, user_id):
+        """Fetch the first shop for a user via shops_r scope (works on draft apps)."""
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'x-api-key': current_app.config['ETSY_CLIENT_ID']
+        }
+        try:
+            response = requests.get(
+                EtsyOAuth.ETSY_SHOPS_URL,
+                headers=headers,
+                params={'user_id': user_id, 'limit': 1}
+            )
+            if not response.ok:
+                logger.warning(f"[get_shop_by_user] {response.status_code}: {response.text[:200]}")
+                response.raise_for_status()
+            data = response.json()
+            results = data.get('results', [])
+            return results[0] if results else None
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to get shop by user: {str(e)}")
+
     @staticmethod
     def refresh_access_token(refresh_token):
         """Refresh an expired access token"""
