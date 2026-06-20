@@ -26,9 +26,6 @@ def create_app(config_name='development'):
     """Application factory"""
     app = Flask(__name__)
 
-    # Temporary: enable debug logging to diagnose OAuth token response
-    logging.basicConfig(level=logging.DEBUG)
-
     # Load configuration
     app.config.from_object(config[config_name])
 
@@ -87,15 +84,12 @@ def create_app(config_name='development'):
                 return jsonify({'error': 'Missing code_verifier'}), 400
             
             # Exchange code for token
+            # user_id is extracted from the access token prefix by exchange_code_for_token
             token_data = EtsyOAuth.exchange_code_for_token(code, code_verifier)
             access_token = token_data['access_token']
             refresh_token = token_data.get('refresh_token')
             expires_in = token_data.get('expires_in', 3600)
-            raw_user_id = token_data.get('user_id')
-            logger.debug(f"[oauth_callback] raw user_id from token: {raw_user_id!r}")
-            if not raw_user_id:
-                raise Exception(f"Etsy token response missing user_id (got {raw_user_id!r})")
-            etsy_user_id = str(raw_user_id)
+            etsy_user_id = token_data['user_id']
 
             # Get user profile (first_name, shop_id, etc.)
             user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
