@@ -83,10 +83,7 @@ class EtsyOAuth:
             response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
             response.raise_for_status()
             token_data = response.json()
-            logger.debug(f"[exchange_code_for_token] token_data keys: {list(token_data.keys())}")
-            if not token_data.get('user_id'):
-                token_data['user_id'] = EtsyOAuth._decode_user_id(token_data['access_token'])
-            logger.debug(f"[exchange_code_for_token] resolved user_id: {token_data.get('user_id')}")
+            logger.debug(f"[exchange_code_for_token] token_data keys: {list(token_data.keys())}, user_id value: {token_data.get('user_id')!r}")
             return token_data
         except requests.exceptions.RequestException as e:
             raise Exception(f"Failed to exchange code for token: {str(e)}")

@@ -91,7 +91,11 @@ def create_app(config_name='development'):
             access_token = token_data['access_token']
             refresh_token = token_data.get('refresh_token')
             expires_in = token_data.get('expires_in', 3600)
-            etsy_user_id = str(token_data['user_id'])
+            raw_user_id = token_data.get('user_id')
+            logger.debug(f"[oauth_callback] raw user_id from token: {raw_user_id!r}")
+            if not raw_user_id:
+                raise Exception(f"Etsy token response missing user_id (got {raw_user_id!r})")
+            etsy_user_id = str(raw_user_id)
 
             # Get user profile (first_name, shop_id, etc.)
             user_info = EtsyOAuth.get_user_info(access_token, etsy_user_id)
