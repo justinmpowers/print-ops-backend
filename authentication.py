@@ -120,7 +120,11 @@ class EtsyOAuth:
         if not response.ok:
             logger.error(f"[get_shop_for_user] {response.status_code}: {response.text[:200]}")
             response.raise_for_status()
-        results = response.json().get('results', [])
+        data = response.json()
+        logger.info(f"[get_shop_for_user] response: {str(data)[:300]}")
+        if 'shop_id' in data:
+            return data
+        results = data.get('results', [])
         return results[0] if results else None
 
     @staticmethod
