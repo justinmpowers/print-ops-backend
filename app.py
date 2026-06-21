@@ -1,11 +1,13 @@
 import os
+import ipaddress
+import re
 import requests
 import smtplib
 import logging
 from email.message import EmailMessage
 from urllib.parse import urlparse, quote
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, session, send_from_directory, abort
+from flask import Flask, jsonify, request, session, send_from_directory, abort, current_app
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
@@ -1106,6 +1108,31 @@ def create_app(config_name='development'):
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== PRINTER ROUTES ====================
+    # SSRF guard: block cloud metadata IPs while allowing LAN printer IPs
+    _BLOCKED_HOSTS = frozenset(['169.254.169.254', 'metadata.google.internal', 'metadata.azure.com'])
+    _METADATA_NETS = [ipaddress.ip_network('169.254.0.0/16')]
+
+    def _is_safe_printer_url(url: str) -> bool:
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ('http', 'https'):
+                return False
+            hostname = parsed.hostname or ''
+            if not hostname:
+                return False
+            if hostname.lower() in _BLOCKED_HOSTS:
+                return False
+            try:
+                addr = ipaddress.ip_address(hostname)
+                for net in _METADATA_NETS:
+                    if addr in net:
+                        return False
+            except ValueError:
+                pass  # hostname, not an IP — allowed
+            return True
+        except Exception:
+            return False
+
     @app.route('/api/printers', methods=['GET', 'POST'])
     @token_required
     def printers():
@@ -1113,8 +1140,8 @@ def create_app(config_name='development'):
         try:
             current_user = request.user
             if request.method == 'GET':
-                printers = Printer.query.filter_by(user_id=current_user.id).order_by(Printer.name.asc()).all()
-                return jsonify({'printers': [p.to_dict() for p in printers], 'total': len(printers)}), 200
+                printers_list = Printer.query.filter_by(user_id=current_user.id).order_by(Printer.name.asc()).all()
+                return jsonify({'printers': [p.to_dict() for p in printers_list], 'total': len(printers_list)}), 200
 
             data = request.get_json() or {}
             name = data.get('name')
@@ -1131,16 +1158,41 @@ def create_app(config_name='development'):
                 last_maintenance_at=datetime.fromisoformat(data['last_maintenance_at']) if data.get('last_maintenance_at') else None
             )
             db.session.add(printer)
+            db.session.flush()  # get printer.id before creating connection
+
+            # Auto-create PrinterConnection when connection fields are provided
+            connection_type = data.get('connection_type')
+            VALID_CONN_TYPES = {'octoprint', 'klipper', 'moonraker', 'bambu_lan', 'bambu_cloud'}
+            if connection_type and connection_type in VALID_CONN_TYPES:
+                api_url = data.get('api_url') or ''
+                # Bambu Cloud uses a fixed endpoint; LAN printers use their IP
+                if connection_type == 'bambu_cloud' and not api_url:
+                    api_url = 'https://api.bambulab.com'
+                if api_url and not _is_safe_printer_url(api_url):
+                    db.session.rollback()
+                    return jsonify({'error': 'Invalid or unsafe api_url'}), 400
+                connection = PrinterConnection(
+                    printer_id=printer.id,
+                    user_id=current_user.id,
+                    connection_type=connection_type,
+                    api_url=api_url or 'https://api.bambulab.com',
+                    api_key=data.get('api_key'),
+                    serial_number=data.get('serial_number'),
+                    access_code=data.get('access_code'),
+                )
+                db.session.add(connection)
+
             db.session.commit()
             return jsonify(printer.to_dict()), 201
         except Exception as e:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Exception in printers POST")
+            return jsonify({'error': 'An error occurred'}), 500
 
-    @app.route('/api/printers/<int:printer_id>', methods=['GET', 'PUT'])
+    @app.route('/api/printers/<int:printer_id>', methods=['GET', 'PUT', 'DELETE'])
     @token_required
     def printer_detail(printer_id):
-        """Fetch or update printer"""
+        """Fetch, update, or delete a printer"""
         try:
             current_user = request.user
             printer = Printer.query.filter_by(id=printer_id, user_id=current_user.id).first()
@@ -1150,17 +1202,61 @@ def create_app(config_name='development'):
             if request.method == 'GET':
                 return jsonify(printer.to_dict()), 200
 
+            if request.method == 'DELETE':
+                # Remove connection first (cascade would also work but explicit is safer)
+                if printer.connection:
+                    db.session.delete(printer.connection)
+                db.session.delete(printer)
+                db.session.commit()
+                return jsonify({'message': 'Printer deleted'}), 200
+
             data = request.get_json() or {}
             for field in ['name', 'model', 'location', 'status', 'notes', 'maintenance_interval_days']:
                 if field in data:
                     setattr(printer, field, data[field])
             if 'last_maintenance_at' in data:
                 printer.last_maintenance_at = datetime.fromisoformat(data['last_maintenance_at']) if data['last_maintenance_at'] else None
+
+            # Update connection fields if provided
+            connection_type = data.get('connection_type')
+            if connection_type:
+                conn = printer.connection
+                if conn:
+                    if connection_type:
+                        conn.connection_type = connection_type
+                    if 'api_url' in data and data['api_url']:
+                        if not _is_safe_printer_url(data['api_url']):
+                            return jsonify({'error': 'Invalid or unsafe api_url'}), 400
+                        conn.api_url = data['api_url']
+                    if 'api_key' in data:
+                        conn.api_key = data['api_key']
+                    if 'serial_number' in data:
+                        conn.serial_number = data['serial_number']
+                    if 'access_code' in data:
+                        conn.access_code = data['access_code']
+                else:
+                    VALID_CONN_TYPES = {'octoprint', 'klipper', 'moonraker', 'bambu_lan', 'bambu_cloud'}
+                    if connection_type in VALID_CONN_TYPES:
+                        api_url = data.get('api_url') or 'https://api.bambulab.com'
+                        if not _is_safe_printer_url(api_url):
+                            return jsonify({'error': 'Invalid or unsafe api_url'}), 400
+                        conn = PrinterConnection(
+                            printer_id=printer.id,
+                            user_id=current_user.id,
+                            connection_type=connection_type,
+                            api_url=api_url,
+                            api_key=data.get('api_key'),
+                            serial_number=data.get('serial_number'),
+                            access_code=data.get('access_code'),
+                        )
+                        db.session.add(conn)
+
             db.session.commit()
             return jsonify(printer.to_dict()), 200
         except Exception as e:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Exception in printer_detail")
+            return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/printers/<int:printer_id>/assign-orders', methods=['POST'])
     @token_required
@@ -1888,29 +1984,32 @@ def create_app(config_name='development'):
     @app.route('/api/printer-connections/<int:connection_id>/status', methods=['GET'])
     @token_required
     def get_printer_status(connection_id):
-        """Get current printer status from OctoPrint/Klipper"""
+        """Get current printer status from OctoPrint/Klipper/Bambu Cloud"""
         try:
             current_user = request.user
             connection = PrinterConnection.query.filter_by(id=connection_id, user_id=current_user.id).first()
             if not connection:
                 return jsonify({'error': 'Connection not found'}), 404
-            
+
+            # Validate stored api_url before making outbound requests
+            if connection.api_url and not _is_safe_printer_url(connection.api_url):
+                return jsonify({'error': 'Stored api_url is invalid'}), 400
+
             headers = {}
             if connection.api_key:
                 if connection.connection_type == 'octoprint':
                     headers['X-Api-Key'] = connection.api_key
                 elif connection.connection_type in ['klipper', 'moonraker']:
                     headers['Authorization'] = f'Bearer {connection.api_key}'
-            
+
             try:
                 if connection.connection_type == 'octoprint':
                     response = requests.get(f"{connection.api_url}/api/printer", headers=headers, timeout=5)
                 elif connection.connection_type in ['klipper', 'moonraker']:
                     response = requests.get(f"{connection.api_url}/printer/info", headers=headers, timeout=5)
                 elif connection.connection_type == 'bambu_cloud':
-                    # Bambu Cloud API - requires authentication token
-                    if not connection.api_key:
-                        return jsonify({'error': 'API key required for Bambu Cloud'}), 400
+                    if not connection.api_key or not connection.serial_number:
+                        return jsonify({'error': 'API key and serial number required for Bambu Cloud'}), 400
                     headers['Authorization'] = f'Bearer {connection.api_key}'
                     response = requests.get(
                         f"https://api.bambulab.com/v1/iot-service/api/user/device/{connection.serial_number}",
@@ -1918,46 +2017,55 @@ def create_app(config_name='development'):
                         timeout=5
                     )
                 elif connection.connection_type == 'bambu_lan':
-                    # Bambu LAN mode - MQTT-based, use simplified HTTP polling to device IP
-                    # Format: http://{printer_ip}/api/status
-                    response = requests.get(
-                        f"{connection.api_url}/api/status",
-                        auth=('bblp', connection.access_code) if connection.access_code else None,
-                        timeout=5
-                    )
+                    # Bambu LAN: MQTT is the primary protocol; HTTP fallback on port 8988 may work
+                    # on some firmware. We try both formats gracefully.
+                    auth = ('bblp', connection.access_code) if connection.access_code else None
+                    try:
+                        response = requests.get(
+                            f"{connection.api_url}:8988/api/status",
+                            auth=auth, timeout=5
+                        )
+                    except Exception:
+                        response = requests.get(
+                            f"{connection.api_url}/api/status",
+                            auth=auth, timeout=5
+                        )
                 else:
                     return jsonify({'error': 'Unsupported connection type'}), 400
-                
+
                 response.raise_for_status()
                 status_data = response.json()
-                
-                # Parse Bambu Lab status into standardized format
+
                 if connection.connection_type in ['bambu_cloud', 'bambu_lan']:
-                    # Extract relevant fields from Bambu response
-                    parsed_status = {
-                        'state': status_data.get('print', {}).get('gcode_state', 'UNKNOWN'),
-                        'progress': status_data.get('print', {}).get('mc_percent', 0),
-                        'current_layer': status_data.get('print', {}).get('layer_num', 0),
-                        'total_layers': status_data.get('print', {}).get('total_layer_num', 0),
-                        'bed_temp': status_data.get('print', {}).get('bed_temper', 0),
-                        'nozzle_temp': status_data.get('print', {}).get('nozzle_temper', 0),
-                        'chamber_temp': status_data.get('print', {}).get('chamber_temper', 0),
-                        'print_error': status_data.get('print', {}).get('print_error', 0),
-                        'raw': status_data
+                    print_info = status_data.get('print', status_data)
+                    status_data = {
+                        'state': print_info.get('gcode_state', 'UNKNOWN'),
+                        'progress': print_info.get('mc_percent', 0),
+                        'current_layer': print_info.get('layer_num', 0),
+                        'total_layers': print_info.get('total_layer_num', 0),
+                        'bed_temp': print_info.get('bed_temper', 0),
+                        'nozzle_temp': print_info.get('nozzle_temper', 0),
+                        'chamber_temp': print_info.get('chamber_temper', 0),
+                        'print_error': print_info.get('print_error', 0),
                     }
-                    status_data = parsed_status
-                
+
                 connection.status = 'connected'
                 connection.last_connected_at = datetime.now(timezone.utc)
                 db.session.commit()
-                
                 return jsonify({'status': status_data, 'connection_status': 'connected'}), 200
-            except Exception as e:
+
+            except requests.Timeout:
                 connection.status = 'error'
                 db.session.commit()
-                print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+                return jsonify({'error': 'Printer did not respond (timeout)', 'connection_status': 'timeout'}), 504
+            except requests.RequestException as e:
+                connection.status = 'error'
+                db.session.commit()
+                logger.warning("Printer status request failed for connection %d: %s", int(connection_id), type(e).__name__)
+                return jsonify({'error': 'Could not reach printer', 'connection_status': 'error'}), 502
         except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Exception in get_printer_status")
+            return jsonify({'error': 'An error occurred'}), 500
     
     # Weather & Filament Recommendations
     @app.route('/api/weather/filament-recommendations', methods=['GET'])
@@ -1984,7 +2092,6 @@ def create_app(config_name='development'):
 
                 # Validate and encode location to prevent partial SSRF via query manipulation
                 # Allow only reasonable characters for a city/country string
-                import re
                 if not re.fullmatch(r"[a-zA-Z0-9 ,._-]{1,100}", location):
                     return jsonify({'error': 'Invalid location parameter'}), 400
 
@@ -2398,7 +2505,8 @@ def create_app(config_name='development'):
             if not settings:
                 settings = AlertSettings(user_id=current_user.id)
                 db.session.add(settings)
-            for field in ['slack_webhook_url', 'discord_webhook_url', 'email_enabled', 'email_to']:
+            for field in ['slack_webhook_url', 'discord_webhook_url', 'email_enabled', 'email_to',
+                          'telegram_bot_token', 'telegram_chat_id']:
                 if field in data:
                     setattr(settings, field, data[field])
             settings.updated_at = datetime.utcnow()
@@ -2468,6 +2576,17 @@ def create_app(config_name='development'):
             return resp.status_code in (200, 204)
         except Exception as e:
             logger.error(f"Webhook send failed: {type(e).__name__}")
+            return False
+
+    def _send_telegram(bot_token: str | None, chat_id: str | None, text: str) -> bool:
+        if not bot_token or not chat_id:
+            return False
+        try:
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            resp = requests.post(url, json={'chat_id': chat_id, 'text': text}, timeout=10)
+            return resp.status_code == 200
+        except Exception as e:
+            logger.error(f"Telegram send failed: {type(e).__name__}")
             return False
 
     def _send_email(to_addr: str | None, subject: str, body: str) -> bool:
@@ -2540,6 +2659,8 @@ def create_app(config_name='development'):
                 sent_channels.append('discord')
             if settings.email_enabled and _send_email(settings.email_to, 'J3D Alerts', message):
                 sent_channels.append('email')
+            if _send_telegram(settings.telegram_bot_token, settings.telegram_chat_id, message):
+                sent_channels.append('telegram')
 
             return jsonify({
                 'sent': len(sent_channels) > 0,
