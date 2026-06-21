@@ -457,7 +457,7 @@ class PrinterConnection(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    printer = db.relationship('Printer', backref='connection', uselist=False)
+    printer = db.relationship('Printer', backref=db.backref('connection', uselist=False), uselist=False)
 
     def to_dict(self):
         return {
