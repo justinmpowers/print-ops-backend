@@ -2061,7 +2061,7 @@ def create_app(config_name='development'):
             except requests.RequestException as e:
                 connection.status = 'error'
                 db.session.commit()
-                logger.warning(f"Printer status request failed for connection {connection_id}: {type(e).__name__}")
+                logger.warning("Printer status request failed for connection %d: %s", int(connection_id), type(e).__name__)
                 return jsonify({'error': 'Could not reach printer', 'connection_status': 'error'}), 502
         except Exception as e:
             logger.exception("Exception in get_printer_status")
