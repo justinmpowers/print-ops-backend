@@ -791,7 +791,7 @@ class ScheduledPrint(db.Model):
 
 
 class AlertSettings(db.Model):
-    """Global alert destinations per user (Slack/Discord/Telegram/email)."""
+    """Global alert destinations per user (Slack/Discord/ntfy/email)."""
     __tablename__ = 'alert_settings'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -800,8 +800,9 @@ class AlertSettings(db.Model):
     discord_webhook_url = db.Column(db.String(500))
     email_enabled = db.Column(db.Boolean, default=False)
     email_to = db.Column(db.String(255))
-    telegram_bot_token = db.Column(db.String(200))
-    telegram_chat_id = db.Column(db.String(100))
+    ntfy_server = db.Column(db.String(255))  # defaults to https://ntfy.sh when blank
+    ntfy_topic = db.Column(db.String(100))
+    ntfy_token = db.Column(db.String(200))  # only for servers that require auth
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -813,9 +814,10 @@ class AlertSettings(db.Model):
             'discord_webhook_url': self.discord_webhook_url,
             'email_enabled': self.email_enabled,
             'email_to': self.email_to,
-            'telegram_bot_token': self.telegram_bot_token,
-            'telegram_chat_id': self.telegram_chat_id,
-            'telegram_enabled': bool(self.telegram_bot_token and self.telegram_chat_id),
+            'ntfy_server': self.ntfy_server,
+            'ntfy_topic': self.ntfy_topic,
+            'ntfy_token': self.ntfy_token,
+            'ntfy_enabled': bool(self.ntfy_topic),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
