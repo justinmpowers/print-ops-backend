@@ -49,6 +49,30 @@ class RefreshToken(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class DeviceKey(db.Model):
+    """API keys for unattended devices (e.g. a PrintHub board). Only the hash is stored."""
+    __tablename__ = 'device_keys'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(255), nullable=False)
+    key_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    key_prefix = db.Column(db.String(12), nullable=False)  # shown in the UI to tell keys apart
+    last_used_at = db.Column(db.DateTime)
+    revoked_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'key_prefix': self.key_prefix,
+            'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
+            'revoked_at': self.revoked_at.isoformat() if self.revoked_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Customer(db.Model):
     """CRM customer profile"""
     __tablename__ = 'customers'

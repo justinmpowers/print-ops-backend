@@ -9,7 +9,7 @@ from functools import wraps
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from flask import current_app, request, jsonify, session
-from models import db, User, RefreshToken
+from models import db, User, RefreshToken, DeviceKey
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,62 @@ class TokenManager:
         if record and record.revoked_at is None:
             record.revoked_at = datetime.utcnow()
             db.session.commit()
+
+class DeviceKeyManager:
+    """Long-lived API keys for unattended devices, sent in the X-Device-Key header."""
+
+    PREFIX = 'pok_'
+
+    @staticmethod
+    def _hash(raw_key):
+        return hashlib.sha256(raw_key.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def create(user_id, name):
+        """Create a key. Returns (record, raw_key); the raw key is never stored or shown again."""
+        raw_key = DeviceKeyManager.PREFIX + secrets.token_urlsafe(32)
+        record = DeviceKey(
+            user_id=user_id,
+            name=name,
+            key_hash=DeviceKeyManager._hash(raw_key),
+            key_prefix=raw_key[:10],
+        )
+        db.session.add(record)
+        db.session.commit()
+        return record, raw_key
+
+    @staticmethod
+    def verify(raw_key):
+        """Return the active DeviceKey for a raw key, or None."""
+        if not raw_key or not raw_key.startswith(DeviceKeyManager.PREFIX):
+            return None
+        record = DeviceKey.query.filter_by(key_hash=DeviceKeyManager._hash(raw_key)).first()
+        if not record or record.revoked_at is not None:
+            return None
+        return record
+
+
+def device_required(f):
+    """Decorator to require a valid device key (X-Device-Key header)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        record = DeviceKeyManager.verify(request.headers.get('X-Device-Key'))
+        if not record:
+            return jsonify({'message': 'Invalid or missing device key'}), 401
+
+        user = User.query.get(record.user_id)
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
+
+        record.last_used_at = datetime.utcnow()
+        db.session.commit()
+
+        request.user = user
+        request.device = record
+        return f(*args, **kwargs)
+
+    return decorated
+
 
 def token_required(f):
     """Decorator to require valid JWT token"""

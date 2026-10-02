@@ -19,8 +19,8 @@ from werkzeug.utils import secure_filename
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
 from config import config
-from models import db, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings
-from authentication import EtsyOAuth, TokenManager, token_required
+from models import db, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
+from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyManager, device_required
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
 from manyfold_api import ManyfoldAPI, ManyfoldAPIError
 from bambu_lan import get_bambu_lan_status, BambuLANError
@@ -2637,6 +2637,137 @@ def create_app(config_name='development'):
             print(f"Error scheduling prints: {e}")
             return jsonify({'error': 'Failed to schedule prints'}), 500
     
+    # ==================== DEVICE API ====================
+    # Unattended devices (e.g. a PrintHub board next to the printers) authenticate with a
+    # device key instead of a user session and report what the printers are doing.
+    @app.route('/api/devices', methods=['GET', 'POST'])
+    @token_required
+    def device_keys():
+        """List device keys or create a new one"""
+        try:
+            current_user = request.user
+            if request.method == 'GET':
+                keys = DeviceKey.query.filter_by(user_id=current_user.id).order_by(DeviceKey.created_at.desc()).all()
+                return jsonify({'devices': [k.to_dict() for k in keys], 'total': len(keys)}), 200
+
+            data = request.get_json() or {}
+            name = (data.get('name') or '').strip()
+            if not name:
+                return jsonify({'error': 'name is required'}), 400
+            record, raw_key = DeviceKeyManager.create(current_user.id, name[:255])
+            # The raw key is only ever returned here; only its hash is stored.
+            return jsonify({**record.to_dict(), 'key': raw_key}), 201
+        except Exception:
+            db.session.rollback()
+            logger.exception("Error managing device keys")
+            return jsonify({'error': 'Failed to manage device keys'}), 500
+
+    @app.route('/api/devices/<int:device_id>', methods=['DELETE'])
+    @token_required
+    def revoke_device_key(device_id):
+        """Revoke a device key"""
+        try:
+            record = DeviceKey.query.filter_by(id=device_id, user_id=request.user.id).first()
+            if not record:
+                return jsonify({'error': 'Device not found'}), 404
+            if record.revoked_at is None:
+                record.revoked_at = datetime.now(timezone.utc)
+                db.session.commit()
+            return jsonify(record.to_dict()), 200
+        except Exception:
+            db.session.rollback()
+            logger.exception("Error revoking device key")
+            return jsonify({'error': 'Failed to revoke device key'}), 500
+
+    @app.route('/api/device/ping', methods=['GET'])
+    @device_required
+    def device_ping():
+        """Lets a device check its key"""
+        return jsonify({'ok': True, 'device': request.device.name}), 200
+
+    def _find_device_printer(user_id, printer_info):
+        """Match a reported printer by serial number first, then by name (case-insensitive)."""
+        serial = (printer_info.get('serial_number') or '').strip()
+        if serial:
+            conn = PrinterConnection.query.filter_by(user_id=user_id, serial_number=serial).first()
+            if conn:
+                return conn.printer
+        name = (printer_info.get('name') or '').strip()
+        if name:
+            return Printer.query.filter(Printer.user_id == user_id, db.func.lower(Printer.name) == name.lower()).first()
+        return None
+
+    @app.route('/api/device/printer-events', methods=['POST'])
+    @device_required
+    def device_printer_event():
+        """Record a print lifecycle event reported by a device.
+
+        Body: {"printer": {"name": ..., "serial_number": ...},
+               "event": "started" | "finished" | "failed", "job_name": ..., "message": ...}
+        A started event claims a matching queued/scheduled print if there is one, otherwise
+        creates a row, so prints started at the printer still appear in the history.
+        """
+        try:
+            user_id = request.user.id
+            data = request.get_json(silent=True) or {}
+            event = data.get('event')
+            if event not in ('started', 'finished', 'failed'):
+                return jsonify({'error': 'event must be started, finished or failed'}), 400
+
+            printer = _find_device_printer(user_id, data.get('printer') or {})
+            if not printer:
+                return jsonify({'error': 'Unknown printer'}), 404
+
+            now = datetime.now(timezone.utc)
+            job_name = (data.get('job_name') or 'Unnamed Print')[:255]
+            job = ScheduledPrint.query.filter_by(
+                user_id=user_id, printer_id=printer.id, status='started'
+            ).order_by(ScheduledPrint.started_at.desc()).first()
+
+            if event == 'started':
+                if job and job.job_name != job_name:
+                    # A different job was still open: the device missed its end. Close it out.
+                    job.status = 'completed'
+                    job.completed_at = now
+                    job = None
+                if not job:
+                    job = ScheduledPrint.query.filter(
+                        ScheduledPrint.user_id == user_id,
+                        ScheduledPrint.printer_id == printer.id,
+                        ScheduledPrint.status.in_(['queued', 'scheduled']),
+                        db.or_(ScheduledPrint.job_name == job_name, ScheduledPrint.file_name == job_name),
+                    ).order_by(ScheduledPrint.priority.desc(), ScheduledPrint.created_at.asc()).first()
+                if not job:
+                    job = ScheduledPrint(user_id=user_id, printer_id=printer.id, job_name=job_name,
+                                         notes=f'Reported by {request.device.name}')
+                    db.session.add(job)
+                job.status = 'started'
+                job.started_at = job.started_at or now
+                printer.status = 'PRINTING'
+            else:
+                if not job:
+                    # The device came up mid-print or the start was missed; still keep a record.
+                    job = ScheduledPrint(user_id=user_id, printer_id=printer.id, job_name=job_name,
+                                         notes=f'Reported by {request.device.name}')
+                    db.session.add(job)
+                job.status = 'completed' if event == 'finished' else 'failed'
+                job.completed_at = now
+                if event == 'failed':
+                    job.failed_reason = (data.get('message') or 'Reported failed by device')[:500]
+                if printer.status == 'PRINTING':
+                    printer.status = 'IDLE'
+
+            if printer.connection:
+                printer.connection.status = 'connected'
+                printer.connection.last_connected_at = now
+
+            db.session.commit()
+            return jsonify({'printer_id': printer.id, 'print': job.to_dict()}), 200
+        except Exception:
+            db.session.rollback()
+            logger.exception("Error recording device printer event")
+            return jsonify({'error': 'Failed to record printer event'}), 500
+
     # ==================== HEALTH CHECK ====================
     @app.route('/api/health', methods=['GET'])
     def health_check():
