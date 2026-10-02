@@ -474,6 +474,69 @@ Update notification settings.
 }
 ```
 
+## Devices
+
+Unattended devices (for example a PrintHub board sitting next to the printers) authenticate
+with a device key instead of a user session. Create the key while logged in, then put it in
+the device's config. The device sends it in an `X-Device-Key` header.
+
+### POST /devices
+Create a device key. The raw key is returned **once**; only its hash is stored.
+
+**Request:**
+```json
+{ "name": "PrintHub" }
+```
+
+**Response (201):**
+```json
+{
+  "id": 1,
+  "name": "PrintHub",
+  "key": "pok_...",
+  "key_prefix": "pok_AbCdEf",
+  "last_used_at": null,
+  "revoked_at": null,
+  "created_at": "2026-10-02T03:40:00"
+}
+```
+
+### GET /devices
+List device keys (without the raw key).
+
+### DELETE /devices/:id
+Revoke a device key. The device's requests are rejected from then on.
+
+### GET /device/ping
+Device-authenticated. Lets a device check its key.
+
+**Response:** `{ "ok": true, "device": "PrintHub" }`
+
+### POST /device/printer-events
+Device-authenticated. Records a print starting, finishing or failing.
+
+**Request:**
+```json
+{
+  "printer": { "name": "X1 Carbon", "serial_number": "00M00A000000000" },
+  "event": "started",
+  "job_name": "benchy",
+  "message": "optional failure reason"
+}
+```
+
+- `event` is `started`, `finished` or `failed`.
+- The printer is matched by connection serial number first, then by name (case-insensitive).
+  An unmatched printer returns `404`.
+- `started` claims a queued/scheduled print on that printer whose job or file name matches,
+  otherwise creates a scheduled-print row with status `started`.
+- `finished` / `failed` close the open print (status `completed` / `failed`) and set the
+  printer back to `IDLE`.
+
+**Response:** `{ "printer_id": 1, "print": { ...scheduled print... } }`
+
+---
+
 ## Analytics
 
 ### GET /analytics/dashboard
