@@ -2663,10 +2663,13 @@ def create_app(config_name='development'):
         return jsonify({'error': 'Internal server error'}), 500
     
     # ==================== ALERTS: SETTINGS, PREVIEW, TRIGGER ====================
+    _NTFY_DEFAULT_SERVER = 'https://ntfy.sh'
+    _NTFY_TOPIC_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
     @app.route('/api/alerts/settings', methods=['GET', 'PUT'])
     @token_required
     def alert_settings():
-        """Get or update alert destinations (Slack/Discord/email)."""
+        """Get or update alert destinations (Slack/Discord/ntfy/email)."""
         try:
             current_user = request.user
             settings = AlertSettings.query.filter_by(user_id=current_user.id).first()
@@ -2682,8 +2685,12 @@ def create_app(config_name='development'):
             if not settings:
                 settings = AlertSettings(user_id=current_user.id)
                 db.session.add(settings)
+            if data.get('ntfy_topic') and not _NTFY_TOPIC_RE.match(data['ntfy_topic']):
+                return jsonify({'error': 'ntfy topic may only contain letters, numbers, - and _ (max 64)'}), 400
+            if data.get('ntfy_server') and not _is_safe_printer_url(data['ntfy_server']):
+                return jsonify({'error': 'Invalid ntfy server URL'}), 400
             for field in ['slack_webhook_url', 'discord_webhook_url', 'email_enabled', 'email_to',
-                          'telegram_bot_token', 'telegram_chat_id']:
+                          'ntfy_server', 'ntfy_topic', 'ntfy_token']:
                 if field in data:
                     setattr(settings, field, data[field])
             settings.updated_at = datetime.utcnow()
@@ -2755,15 +2762,22 @@ def create_app(config_name='development'):
             logger.error(f"Webhook send failed: {type(e).__name__}")
             return False
 
-    def _send_telegram(bot_token: str | None, chat_id: str | None, text: str) -> bool:
-        if not bot_token or not chat_id:
+    def _send_ntfy(server: str | None, topic: str | None, token: str | None, text: str, title: str = 'J3D Alerts') -> bool:
+        if not topic or not _NTFY_TOPIC_RE.match(topic):
+            return False
+        server = (server or _NTFY_DEFAULT_SERVER).rstrip('/')
+        if not _is_safe_printer_url(server):
+            logger.warning("Refusing to send to unsafe ntfy server URL")
             return False
         try:
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            resp = requests.post(url, json={'chat_id': chat_id, 'text': text}, timeout=10)
+            headers = {'Title': title}
+            if token:
+                headers['Authorization'] = f'Bearer {token}'
+            resp = requests.post(f"{server}/{topic}", data=text.encode('utf-8'), headers=headers,
+                                 timeout=app.config.get('HTTP_TIMEOUT', 10))
             return resp.status_code == 200
         except Exception as e:
-            logger.error(f"Telegram send failed: {type(e).__name__}")
+            logger.error(f"ntfy send failed: {type(e).__name__}")
             return False
 
     def _send_email(to_addr: str | None, subject: str, body: str) -> bool:
@@ -2836,8 +2850,8 @@ def create_app(config_name='development'):
                 sent_channels.append('discord')
             if settings.email_enabled and _send_email(settings.email_to, 'J3D Alerts', message):
                 sent_channels.append('email')
-            if _send_telegram(settings.telegram_bot_token, settings.telegram_chat_id, message):
-                sent_channels.append('telegram')
+            if _send_ntfy(settings.ntfy_server, settings.ntfy_topic, settings.ntfy_token, message):
+                sent_channels.append('ntfy')
 
             return jsonify({
                 'sent': len(sent_channels) > 0,
