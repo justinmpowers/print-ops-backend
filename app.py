@@ -16,6 +16,7 @@ load_dotenv()
 
 from flask import Flask, jsonify, request, session, send_from_directory, abort, current_app
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
 from config import config
@@ -783,7 +784,9 @@ def create_app(config_name='development'):
         """Create a new filament entry"""
         try:
             user = request.user
-            data = request.json
+            data = request.get_json(silent=True) or {}
+            if not data.get('color') or not data.get('material'):
+                return jsonify({'error': 'color and material are required'}), 400
             
             filament = Filament(
                 user_id=user.id,
@@ -960,7 +963,9 @@ def create_app(config_name='development'):
         """Create a new product profile"""
         try:
             user = request.user
-            data = request.json
+            data = request.get_json(silent=True) or {}
+            if not data.get('product_name'):
+                return jsonify({'error': 'product_name is required'}), 400
             
             profile = ProductProfile(
                 user_id=user.id,
@@ -1736,7 +1741,11 @@ def create_app(config_name='development'):
                 order.print_completed_at = datetime.now(timezone.utc)
                 # Calculate actual print time
                 if order.print_started_at:
-                    delta = order.print_completed_at - order.print_started_at
+                    # The stored start time comes back from the database without a timezone.
+                    started = order.print_started_at
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
+                    delta = order.print_completed_at - started
                     order.actual_print_time = int(delta.total_seconds() / 60)
             elif new_status == 'FAILED':
                 order.print_failures_count = (order.print_failures_count or 0) + 1
@@ -2319,6 +2328,8 @@ def create_app(config_name='development'):
             
             materials = BambuMaterial.query.filter_by(printer_id=printer_id).all()
             return jsonify([m.to_dict() for m in materials]), 200
+        except HTTPException:
+            raise
         except Exception as e:
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
     
@@ -2347,6 +2358,8 @@ def create_app(config_name='development'):
             db.session.add(material)
             db.session.commit()
             return jsonify(material.to_dict()), 201
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
@@ -2376,6 +2389,8 @@ def create_app(config_name='development'):
             material.updated_at = datetime.utcnow()
             db.session.commit()
             return jsonify(material.to_dict()), 200
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
@@ -2406,6 +2421,8 @@ def create_app(config_name='development'):
                 db.session.commit()
             
             return jsonify(notif.to_dict()), 200
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
@@ -2444,6 +2461,8 @@ def create_app(config_name='development'):
             notif.updated_at = datetime.utcnow()
             db.session.commit()
             return jsonify(notif.to_dict()), 200
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
@@ -2473,6 +2492,8 @@ def create_app(config_name='development'):
             ).all()
             
             return jsonify([p.to_dict() for p in prints]), 200
+        except HTTPException:
+            raise
         except Exception as e:
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
     
@@ -2509,6 +2530,8 @@ def create_app(config_name='development'):
             db.session.add(scheduled_print)
             db.session.commit()
             return jsonify(scheduled_print.to_dict()), 201
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
@@ -2546,6 +2569,8 @@ def create_app(config_name='development'):
             scheduled_print.updated_at = datetime.utcnow()
             db.session.commit()
             return jsonify(scheduled_print.to_dict()), 200
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f"Error updating scheduled print: {e}")
@@ -2565,6 +2590,8 @@ def create_app(config_name='development'):
             db.session.delete(scheduled_print)
             db.session.commit()
             return jsonify({'message': 'Print job deleted'}), 200
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f"Error deleting scheduled print: {e}")
@@ -2589,6 +2616,8 @@ def create_app(config_name='development'):
             ).all()
             
             return jsonify([p.to_dict() for p in queue]), 200
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Error getting print queue: {e}")
             return jsonify({'error': 'Failed to get print queue'}), 500
@@ -2632,6 +2661,8 @@ def create_app(config_name='development'):
         except ValueError as e:
             print(f"Validation error scheduling prints: {e}")
             return jsonify({'error': 'Invalid scheduling parameters'}), 400
+        except HTTPException:
+            raise
         except Exception as e:
             db.session.rollback()
             print(f"Error scheduling prints: {e}")
