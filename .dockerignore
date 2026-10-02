@@ -30,7 +30,13 @@ build
 # OS
 .DS_Store
 Thumbs.db
-.env.local
+
+# Secrets and local state: never bake these into an image
+.env
+.env.*
+instance
+.mcp.json
+.claude
 
 # Development
 .pytest_cache
