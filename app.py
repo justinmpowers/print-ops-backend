@@ -1750,8 +1750,8 @@ def create_app(config_name='development'):
         
         except Exception as e:
             db.session.rollback()
-            print(f"Error updating shipping label: {e}")
-            return jsonify({'error': 'Failed to update shipping label'}), 500
+            logger.exception("Error updating production status")
+            return jsonify({'error': 'Failed to update production status'}), 500
 
     @app.route('/api/orders/<int:order_id>/priority', methods=['PUT'])
     @token_required
