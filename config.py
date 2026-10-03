@@ -3,9 +3,17 @@ from datetime import timedelta
 
 
 def _normalize_db_url(url: str | None) -> str | None:
-    """Ensure SQLAlchemy friendly Postgres scheme"""
-    if url and url.startswith('postgres://'):
-        return url.replace('postgres://', 'postgresql://', 1)
+    """Ensure a SQLAlchemy-friendly Postgres scheme that uses the installed driver.
+
+    SQLAlchemy 2.1 changed the default driver for plain ``postgresql://`` URLs from
+    psycopg2 to psycopg (v3). Only psycopg2 is installed, so name it explicitly; a URL
+    that already names a driver (``postgresql+...://``) is left alone.
+    """
+    if not url:
+        return url
+    for prefix in ('postgres://', 'postgresql://'):
+        if url.startswith(prefix):
+            return 'postgresql+psycopg2://' + url[len(prefix):]
     return url
 
 
