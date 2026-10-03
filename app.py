@@ -20,7 +20,7 @@ from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
 from config import config
-from models import db, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
+from models import db, PrinterLiveStatus, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
 from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyManager, device_required
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
 from manyfold_api import ManyfoldAPI, ManyfoldAPIError
@@ -2727,6 +2727,70 @@ def create_app(config_name='development'):
         if name:
             return Printer.query.filter(Printer.user_id == user_id, db.func.lower(Printer.name) == name.lower()).first()
         return None
+
+    # Live state from a device maps onto Printer.status, which drives the dashboard's printer alerts.
+    # A failed print is not a fault with the printer, so it doesn't raise an alert.
+    _LIVE_TO_PRINTER_STATUS = {'printing': 'PRINTING', 'paused': 'PRINTING', 'offline': 'OFFLINE', 'error': 'ERROR'}
+
+    def _opt_float(value):
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @app.route('/api/device/printer-status', methods=['POST'])
+    @device_required
+    def device_printer_status():
+        """Store the latest live state of each printer a device manages.
+
+        Body: {"printers": [{"name", "serial_number", "state", "job_name", "progress",
+                             "remaining_minutes", "nozzle_temp", "bed_temp", "message"}]}
+        Printers are matched like printer events (serial number, then name). Unknown printers
+        are listed in the response rather than failing the whole update.
+        """
+        try:
+            user_id = request.user.id
+            data = request.get_json(silent=True) or {}
+            reports = data.get('printers')
+            if not isinstance(reports, list):
+                return jsonify({'error': 'printers must be a list'}), 400
+
+            now = datetime.utcnow()
+            matched, unknown = [], []
+            for report in reports[:50]:
+                if not isinstance(report, dict):
+                    continue
+                printer = _find_device_printer(user_id, report)
+                if not printer:
+                    unknown.append(str(report.get('name') or report.get('serial_number') or '?')[:255])
+                    continue
+                live = printer.live_status or PrinterLiveStatus(user_id=user_id, printer_id=printer.id)
+                if live.id is None:
+                    db.session.add(live)
+                live.source = request.device.name
+                live.state = str(report.get('state') or 'offline')[:50]
+                live.job_name = (report.get('job_name') or '')[:255] or None
+                live.progress = _opt_float(report.get('progress'))
+                remaining = _opt_float(report.get('remaining_minutes'))
+                live.remaining_minutes = int(remaining) if remaining is not None else None
+                live.nozzle_temp = _opt_float(report.get('nozzle_temp'))
+                live.bed_temp = _opt_float(report.get('bed_temp'))
+                live.message = (report.get('message') or '')[:500] or None
+                live.reported_at = now
+
+                if printer.status != 'MAINTENANCE':
+                    printer.status = _LIVE_TO_PRINTER_STATUS.get(live.state, 'IDLE')
+                if printer.connection:
+                    printer.connection.status = 'connected' if live.state != 'offline' else 'disconnected'
+                    printer.connection.last_connected_at = now
+                matched.append(printer.name)
+
+            db.session.commit()
+            return jsonify({'matched': matched, 'unknown': unknown}), 200
+        except Exception:
+            db.session.rollback()
+            logger.exception("Error recording device printer status")
+            return jsonify({'error': 'Failed to record printer status'}), 500
 
     @app.route('/api/device/printer-events', methods=['POST'])
     @device_required

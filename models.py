@@ -223,6 +223,8 @@ class Printer(db.Model):
             'connection_status': conn.status if conn else None,
             'api_url': conn.api_url if conn else None,
             'serial_number': conn.serial_number if conn else None,
+            # Latest state pushed by a device (PrintHub); None if no device reports this printer.
+            'live_status': self.live_status.to_dict() if self.live_status else None,
         }
 
 
@@ -472,6 +474,40 @@ class CustomerFile(db.Model):
             'mime_type': self.mime_type,
             'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class PrinterLiveStatus(db.Model):
+    """Latest live state of a printer, as reported by a device such as PrintHub (one row per printer)."""
+    __tablename__ = 'printer_live_status'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    printer_id = db.Column(db.Integer, db.ForeignKey('printers.id'), nullable=False, unique=True)
+    source = db.Column(db.String(255))        # device name that reported it
+    state = db.Column(db.String(50))          # offline, idle, printing, paused, finished, failed, error
+    job_name = db.Column(db.String(255))
+    progress = db.Column(db.Float)            # 0-100
+    remaining_minutes = db.Column(db.Integer)
+    nozzle_temp = db.Column(db.Float)
+    bed_temp = db.Column(db.Float)
+    message = db.Column(db.String(500))
+    reported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    printer = db.relationship('Printer', backref=db.backref('live_status', uselist=False, cascade='all, delete-orphan'))
+
+    def to_dict(self):
+        return {
+            'source': self.source,
+            'state': self.state,
+            'job_name': self.job_name,
+            'progress': self.progress,
+            'remaining_minutes': self.remaining_minutes,
+            'nozzle_temp': self.nozzle_temp,
+            'bed_temp': self.bed_temp,
+            'message': self.message,
+            'reported_at': self.reported_at.isoformat() if self.reported_at else None,
+            'age_seconds': int((datetime.utcnow() - self.reported_at).total_seconds()) if self.reported_at else None,
         }
 
 
