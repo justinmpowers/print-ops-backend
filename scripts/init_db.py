@@ -6,7 +6,7 @@ from pathlib import Path
 # Add parent directory to path to import app
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import _normalize_db_url
+from config import _normalize_db_url, safe_db_url
 from app import create_app
 from models import db
 from flask_migrate import upgrade as migrate_upgrade
@@ -77,7 +77,7 @@ def main():
             db.create_all()
             print(f"✓ Created tables via create_all()")
         
-        print(f"Database ready: config={args.config} at {app.config['SQLALCHEMY_DATABASE_URI']}")
+        print(f"Database ready: config={args.config} at {safe_db_url(app.config['SQLALCHEMY_DATABASE_URI'])}")
 
 
 if __name__ == "__main__":
