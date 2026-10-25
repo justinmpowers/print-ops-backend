@@ -17,6 +17,17 @@ def _normalize_db_url(url: str | None) -> str | None:
     return url
 
 
+def safe_db_url(url: str | None) -> str:
+    """The database URL with any password masked, for logging."""
+    if not url:
+        return str(url)
+    try:
+        from sqlalchemy.engine import make_url
+        return make_url(url).render_as_string(hide_password=True)
+    except Exception:
+        return '<unparseable database URL>'
+
+
 class Config:
     """Base configuration"""
     SQLALCHEMY_DATABASE_URI = _normalize_db_url(os.getenv('DATABASE_URL', 'sqlite:///j3d.db'))

@@ -6,7 +6,7 @@ from pathlib import Path
 # Add parent directory to path to import app
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import _normalize_db_url
+from config import _normalize_db_url, safe_db_url
 from app import create_app
 from models import db
 from flask_migrate import init as migrate_init, migrate as migrate_migrate, upgrade as migrate_upgrade
@@ -57,7 +57,7 @@ def _reinitialize_database(app_config):
     print("Detected stale migration state. Clearing alembic_version and using create_all...")
     _clear_alembic_version()
     db.create_all()
-    print(f"✓ Tables created directly at {app_config['SQLALCHEMY_DATABASE_URI']}")
+    print(f"✓ Tables created directly at {safe_db_url(app_config['SQLALCHEMY_DATABASE_URI'])}")
 
 
 def main():
@@ -84,7 +84,7 @@ def main():
             db.drop_all()
             print("Creating all tables...")
             db.create_all()
-            print(f"✓ Database recreated at {app.config['SQLALCHEMY_DATABASE_URI']}")
+            print(f"✓ Database recreated at {safe_db_url(app.config['SQLALCHEMY_DATABASE_URI'])}")
             return 0
 
         env_py = migrations_dir / "env.py"
@@ -133,7 +133,7 @@ def main():
             print("Applying migrations...")
             try:
                 migrate_upgrade(directory=str(migrations_dir))
-                print(f"✓ Migrations applied to {app.config['SQLALCHEMY_DATABASE_URI']}")
+                print(f"✓ Migrations applied to {safe_db_url(app.config['SQLALCHEMY_DATABASE_URI'])}")
             except Exception as e:
                 error_msg = str(e)
                 print(f"✗ Migration upgrade failed: {error_msg}")
@@ -145,7 +145,7 @@ def main():
                 
                 return 1
     
-    print(f"\n✓ Database config={args.config} at {app.config['SQLALCHEMY_DATABASE_URI']}")
+    print(f"\n✓ Database config={args.config} at {safe_db_url(app.config['SQLALCHEMY_DATABASE_URI'])}")
     return 0
 
 
