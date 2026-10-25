@@ -512,6 +512,37 @@ Device-authenticated. Lets a device check its key.
 
 **Response:** `{ "ok": true, "device": "PrintHub" }`
 
+### POST /device/printer-status
+Device-authenticated. Stores the latest live state of each printer the device manages, so the UI can
+show it without connecting to the printer. PrintHub sends this every 30 seconds and on every state change.
+
+**Request:**
+```json
+{
+  "printers": [
+    {
+      "name": "X1 Carbon",
+      "serial_number": "00M00A000000000",
+      "state": "printing",
+      "job_name": "benchy",
+      "progress": 42.5,
+      "remaining_minutes": 37,
+      "nozzle_temp": 220.4,
+      "bed_temp": 60,
+      "message": ""
+    }
+  ]
+}
+```
+
+- Printers are matched like printer events: connection serial number, then name.
+- One row per printer is kept and overwritten; it appears as `live_status` on `GET /printers` and
+  `GET /printers/:id` (with `reported_at`, `age_seconds` and the reporting device's name as `source`).
+- `Printer.status` follows the live state: printing/paused → `PRINTING`, offline → `OFFLINE`,
+  error → `ERROR`, otherwise `IDLE`. A printer in `MAINTENANCE` is left alone.
+
+**Response:** `{ "matched": ["X1 Carbon"], "unknown": [] }`. Unknown printers don't fail the request.
+
 ### POST /device/printer-events
 Device-authenticated. Records a print starting, finishing or failing.
 
