@@ -25,6 +25,11 @@ from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyMan
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
 from manyfold_api import ManyfoldAPI, ManyfoldAPIError
 from bambu_lan import get_bambu_lan_status, BambuLANError
+from moonraker_api import get_moonraker_status, MoonrakerError
+
+# ankermake: the M5 only talks to Anker's cloud, so PrintOps can't poll it; a device on the
+# printers' network (PrintHub, through ankerctl) pushes its live status instead.
+PRINTER_CONNECTION_TYPES = {'octoprint', 'klipper', 'moonraker', 'bambu_lan', 'bambu_cloud', 'ankermake'}
 from datetime import datetime, timedelta, timezone
 
 # Configure secure logging
@@ -1337,8 +1342,7 @@ def create_app(config_name='development'):
 
             # Auto-create PrinterConnection when connection fields are provided
             connection_type = data.get('connection_type')
-            VALID_CONN_TYPES = {'octoprint', 'klipper', 'moonraker', 'bambu_lan', 'bambu_cloud'}
-            if connection_type and connection_type in VALID_CONN_TYPES:
+            if connection_type and connection_type in PRINTER_CONNECTION_TYPES:
                 api_url = data.get('api_url') or ''
                 # Bambu Cloud uses a fixed endpoint; LAN printers use their IP
                 if connection_type == 'bambu_cloud' and not api_url:
@@ -1350,7 +1354,7 @@ def create_app(config_name='development'):
                     printer_id=printer.id,
                     user_id=current_user.id,
                     connection_type=connection_type,
-                    api_url=api_url or 'https://api.bambulab.com',
+                    api_url=api_url,
                     api_key=data.get('api_key'),
                     serial_number=data.get('serial_number'),
                     access_code=data.get('access_code'),
@@ -1397,8 +1401,9 @@ def create_app(config_name='development'):
             if connection_type:
                 conn = printer.connection
                 if conn:
-                    if connection_type:
-                        conn.connection_type = connection_type
+                    if connection_type not in PRINTER_CONNECTION_TYPES:
+                        return jsonify({'error': 'Unsupported connection type'}), 400
+                    conn.connection_type = connection_type
                     if 'api_url' in data and data['api_url']:
                         if not _is_safe_printer_url(data['api_url']):
                             return jsonify({'error': 'Invalid or unsafe api_url'}), 400
@@ -1410,10 +1415,11 @@ def create_app(config_name='development'):
                     if 'access_code' in data:
                         conn.access_code = data['access_code']
                 else:
-                    VALID_CONN_TYPES = {'octoprint', 'klipper', 'moonraker', 'bambu_lan', 'bambu_cloud'}
-                    if connection_type in VALID_CONN_TYPES:
-                        api_url = data.get('api_url') or 'https://api.bambulab.com'
-                        if not _is_safe_printer_url(api_url):
+                    if connection_type in PRINTER_CONNECTION_TYPES:
+                        api_url = data.get('api_url') or ''
+                        if connection_type == 'bambu_cloud' and not api_url:
+                            api_url = 'https://api.bambulab.com'
+                        if api_url and not _is_safe_printer_url(api_url):
                             return jsonify({'error': 'Invalid or unsafe api_url'}), 400
                         conn = PrinterConnection(
                             printer_id=printer.id,
@@ -2204,6 +2210,34 @@ def create_app(config_name='development'):
                 connection.last_connected_at = datetime.now(timezone.utc)
                 db.session.commit()
                 return jsonify({'status': _bambu_status_from_print_info(print_info), 'connection_status': 'connected'}), 200
+
+            if connection.connection_type == 'ankermake':
+                live = connection.printer.live_status if connection.printer else None
+                if not live:
+                    return jsonify({'error': 'AnkerMake printers report through PrintHub; '
+                                             'add the printer to PrintHub to see its status'}), 409
+                return jsonify({'status': {
+                    'state': (live.state or 'unknown').upper(),
+                    'progress_percent': round(live.progress) if live.progress is not None else None,
+                    'nozzle_temp': live.nozzle_temp,
+                    'bed_temp': live.bed_temp,
+                    'errors': live.message,
+                }, 'connection_status': connection.status}), 200
+
+            # Klipper (including the Snapmaker U1): query Moonraker's printer objects for real
+            # print state rather than just whether Klipper is up.
+            if connection.connection_type in ('klipper', 'moonraker'):
+                try:
+                    status = get_moonraker_status(connection.api_url, connection.api_key)
+                except MoonrakerError as e:
+                    connection.status = 'error'
+                    db.session.commit()
+                    logger.warning("Moonraker status request failed for connection %d: %s", int(connection_id), e)
+                    return jsonify({'error': 'Could not reach printer', 'connection_status': 'error'}), 502
+                connection.status = 'connected'
+                connection.last_connected_at = datetime.now(timezone.utc)
+                db.session.commit()
+                return jsonify({'status': status, 'connection_status': 'connected'}), 200
 
             headers = {}
             if connection.api_key:

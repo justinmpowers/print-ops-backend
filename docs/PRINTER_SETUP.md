@@ -8,10 +8,42 @@ Complete guide to setting up and configuring supported 3D printers.
 - **P1 Series** - P1, P1P, P1S
 - **X1 Series** - X1, X1 Carbon, X1E
 
+### Klipper / Moonraker
+- **Snapmaker U1** and other Klipper printers (Voron, Creality K1, ...). See [Snapmaker U1 Setup](#snapmaker-u1-setup).
+
+### AnkerMake
+- **M5 / M5C**, through PrintHub. See [AnkerMake M5 Setup](#ankermake-m5-setup).
+
 ### Future Support
 - Prusa i3 MK3S+
 - Creality Ender 3 Pro
 - Anycubic i3 Mega
+
+## Snapmaker U1 Setup
+
+The U1 runs Klipper with Moonraker, which serves a status API on port 7125.
+
+1. Give the printer a fixed IP (a DHCP reservation on your router).
+2. Check `http://<printer-ip>:7125/server/info` opens from a machine on the same network.
+3. In PrintOps, add a printer with connection type **Klipper / Moonraker** and API URL
+   `http://<printer-ip>:7125`. Leave the API key empty unless you turned on Moonraker authorization.
+
+The backend polls `/printer/objects/query` for print state, progress, layers and temperatures.
+The nozzle temperature shown is the active toolhead's (the U1 has four). If the PrintOps backend
+runs outside your home network it can't reach the printer; add the U1 to PrintHub instead and its
+live status is pushed to PrintOps.
+
+## AnkerMake M5 Setup
+
+The M5 has no local status API: it reports only to Anker's cloud, with an encrypted payload.
+PrintOps can't poll it, so status comes from PrintHub, which reads it through ankerctl
+(see the PrintHub README).
+
+1. In PrintOps, add a printer with connection type **AnkerMake (via PrintHub)**. No URL or key is needed.
+2. In PrintHub's `config.yaml`, add it under `ankermake:` with **the same name** as in PrintOps.
+3. Within about 30 seconds the printer page shows "Live via PrintHub" with its state.
+
+Print start/finish/fail events are recorded the same way as for other PrintHub printers.
 
 ## Bambu Lab Setup
 
