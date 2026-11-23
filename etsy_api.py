@@ -8,6 +8,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _as_utc(dt):
+    """A datetime as timezone-aware UTC; naive values from the database are UTC already."""
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
+
+
 def _unescape(value):
     """Etsy returns titles/descriptions with HTML entities escaped (e.g.
     "St Patrick&#39;s Day"). Decode them for display/storage."""
@@ -193,9 +200,12 @@ class OrderSyncManager:
                 elif add_order:
                     customer.order_count = (customer.order_count or 0) + 1
                     customer.total_spend = (customer.total_spend or 0) + order_value
-                    if not customer.first_order_at or order_created_at < customer.first_order_at:
+                    # Stored values come back from the database without a timezone (they're UTC);
+                    # compare them as UTC, or a returning customer aborts the whole sync.
+                    first, last = _as_utc(customer.first_order_at), _as_utc(customer.last_order_at)
+                    if not first or order_created_at < first:
                         customer.first_order_at = order_created_at
-                    if not customer.last_order_at or order_created_at > customer.last_order_at:
+                    if not last or order_created_at > last:
                         customer.last_order_at = order_created_at
 
                 return customer
