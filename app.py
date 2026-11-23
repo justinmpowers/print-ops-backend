@@ -19,8 +19,8 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
-from config import config
-from models import db, PrinterLiveStatus, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
+from config import config, check_secret_key
+from models import utcnow, db, PrinterLiveStatus, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
 from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyManager, device_required
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
 from manyfold_api import ManyfoldAPI, ManyfoldAPIError
@@ -98,6 +98,9 @@ def create_app(config_name='development'):
 
     # Load configuration
     app.config.from_object(config[config_name])
+    secret_warning = check_secret_key(app.config.get('SECRET_KEY'), production=config_name == 'production')
+    if secret_warning and not app.config.get('TESTING'):
+        logger.warning(secret_warning)
 
     # Uploads
     app.config['UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads')
@@ -139,7 +142,7 @@ def create_app(config_name='development'):
             session.permanent = True
             url, state, code_verifier = EtsyOAuth.get_authorization_url()
             return jsonify({'auth_url': url, 'code_verifier': code_verifier}), 200
-        except Exception as e:
+        except Exception:
             logger.exception("Exception in get_login_url")
             return jsonify({'error': 'Failed to generate login URL'}), 500
     
@@ -232,7 +235,7 @@ def create_app(config_name='development'):
                 }
             }), 200
             
-        except Exception as e:
+        except Exception:
             logger.exception("Exception in oauth_callback")
             return jsonify({'error': 'Authentication failed'}), 500
     
@@ -404,8 +407,8 @@ def create_app(config_name='development'):
                 'total': len(orders)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/orders/<order_id>', methods=['GET'])
     @token_required
@@ -420,8 +423,8 @@ def create_app(config_name='development'):
             
             return jsonify(order.to_dict()), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/orders/bulk-actions', methods=['POST'])
     @token_required
@@ -462,9 +465,9 @@ def create_app(config_name='development'):
 
             db.session.commit()
             return jsonify({'orders': [order.to_dict() for order in orders], 'total': len(orders)}), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/orders/<int:order_id>/notes', methods=['GET', 'POST'])
     @token_required
@@ -488,9 +491,9 @@ def create_app(config_name='development'):
             db.session.add(note)
             db.session.commit()
             return jsonify(note.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/orders/<int:order_id>/communications', methods=['GET', 'POST'])
     @token_required
@@ -521,9 +524,9 @@ def create_app(config_name='development'):
             db.session.add(log)
             db.session.commit()
             return jsonify(log.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     # ==================== CUSTOMER CRM ROUTES ====================
     @app.route('/api/customers', methods=['GET', 'POST'])
@@ -563,9 +566,9 @@ def create_app(config_name='development'):
             db.session.add(customer)
             db.session.commit()
             return jsonify(customer.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/customers/<int:customer_id>', methods=['GET', 'PUT'])
     @token_required
@@ -590,9 +593,9 @@ def create_app(config_name='development'):
                     setattr(customer, field, data[field])
             db.session.commit()
             return jsonify(customer.to_dict()), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/customers/segments', methods=['GET'])
     @token_required
@@ -605,8 +608,8 @@ def create_app(config_name='development'):
             for c in customers:
                 summary[c.segment()] = summary.get(c.segment(), 0) + 1
             return jsonify(summary), 200
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/customers/<int:customer_id>/requests', methods=['GET', 'POST'])
     @token_required
@@ -635,9 +638,9 @@ def create_app(config_name='development'):
             db.session.add(req)
             db.session.commit()
             return jsonify(req.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/customer-requests/<int:request_id>', methods=['PATCH'])
     @token_required
@@ -656,9 +659,9 @@ def create_app(config_name='development'):
                 req.desired_by = datetime.fromisoformat(data['desired_by']) if data['desired_by'] else None
             db.session.commit()
             return jsonify(req.to_dict()), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/customers/<int:customer_id>/feedback', methods=['GET', 'POST'])
     @token_required
@@ -686,9 +689,9 @@ def create_app(config_name='development'):
             db.session.add(fb)
             db.session.commit()
             return jsonify(fb.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/orders/<int:order_id>/photo', methods=['POST'])
     @token_required
@@ -735,9 +738,9 @@ def create_app(config_name='development'):
             order.photo_url = public_url
             db.session.commit()
             return jsonify({'photo_url': public_url}), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error uploading order photo: {e}")
+            logger.exception("Error uploading order photo")
             return jsonify({'error': 'Failed to upload photo'}), 500
 
     @app.route('/api/orders/<int:order_id>/shipping-label', methods=['POST', 'PUT'])
@@ -762,9 +765,9 @@ def create_app(config_name='development'):
 
             db.session.commit()
             return jsonify(order.to_dict()), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== FILAMENT ROUTES ====================
     @app.route('/api/filaments', methods=['GET'])
@@ -780,8 +783,8 @@ def create_app(config_name='development'):
                 'total': len(filaments)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/filaments', methods=['POST'])
     @token_required
@@ -808,9 +811,9 @@ def create_app(config_name='development'):
             
             return jsonify(filament.to_dict()), 201
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/filaments/<filament_id>', methods=['PUT'])
     @token_required
@@ -838,14 +841,14 @@ def create_app(config_name='development'):
             if 'low_stock_threshold' in data:
                 filament.low_stock_threshold = float(data['low_stock_threshold']) if data['low_stock_threshold'] else 100.0
             
-            filament.updated_at = datetime.utcnow()
+            filament.updated_at = utcnow()
             db.session.commit()
             
             return jsonify(filament.to_dict()), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/filaments/<filament_id>', methods=['DELETE'])
     @token_required
@@ -863,9 +866,9 @@ def create_app(config_name='development'):
             
             return jsonify({'message': 'Filament deleted successfully'}), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== FILAMENT USAGE ROUTES ====================
     @app.route('/api/filament-usage', methods=['POST'])
@@ -903,7 +906,7 @@ def create_app(config_name='development'):
             # Subtract from current amount
             filament.current_amount -= amount_used
             filament.current_amount = max(0, filament.current_amount)  # Don't go negative
-            filament.updated_at = datetime.utcnow()
+            filament.updated_at = utcnow()
             
             # Update order if provided
             if order_id:
@@ -919,9 +922,9 @@ def create_app(config_name='development'):
                 'message': 'Filament usage recorded'
             }), 201
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/filament-usage/order/<order_id>', methods=['GET'])
     @token_required
@@ -941,8 +944,8 @@ def create_app(config_name='development'):
                 'total_filament_used': order.total_filament_used
             }), 200
         
-        except Exception as e:
-            print(f"Error getting filament usage: {e}")
+        except Exception:
+            logger.exception("Error getting filament usage")
             return jsonify({'error': 'Failed to get filament usage'}), 500
     
     # ==================== PRODUCT PROFILE ROUTES ====================
@@ -959,8 +962,8 @@ def create_app(config_name='development'):
                 'total': len(profiles)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/product-profiles', methods=['POST'])
     @token_required
@@ -999,9 +1002,9 @@ def create_app(config_name='development'):
             
             return jsonify(profile.to_dict()), 201
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/product-profiles/<profile_id>', methods=['PUT'])
     @token_required
@@ -1053,14 +1056,14 @@ def create_app(config_name='development'):
             if 'target_margin_pct' in data:
                 profile.target_margin_pct = float(data['target_margin_pct']) if data['target_margin_pct'] is not None else None
             
-            profile.updated_at = datetime.utcnow()
+            profile.updated_at = utcnow()
             db.session.commit()
             
             return jsonify(profile.to_dict()), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/product-profiles/<profile_id>', methods=['DELETE'])
     @token_required
@@ -1078,9 +1081,9 @@ def create_app(config_name='development'):
             
             return jsonify({'message': 'Product profile deleted successfully'}), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     # ==================== MANYFOLD INTEGRATION ====================
     @app.route('/api/integrations/manyfold/settings', methods=['GET'])
@@ -1253,7 +1256,7 @@ def create_app(config_name='development'):
                         
                         # Update filament
                         filament.current_amount -= filament_needed
-                        filament.updated_at = datetime.utcnow()
+                        filament.updated_at = utcnow()
                         
                         db.session.add(usage)
                         total_assigned += filament_needed
@@ -1283,9 +1286,9 @@ def create_app(config_name='development'):
                     'message': 'No matching product profiles or insufficient filament stock'
                 }), 400
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== PRINTER ROUTES ====================
     # SSRF guard: block cloud metadata IPs while allowing LAN printer IPs
@@ -1363,7 +1366,7 @@ def create_app(config_name='development'):
 
             db.session.commit()
             return jsonify(printer.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
             logger.exception("Exception in printers POST")
             return jsonify({'error': 'An error occurred'}), 500
@@ -1434,7 +1437,7 @@ def create_app(config_name='development'):
 
             db.session.commit()
             return jsonify(printer.to_dict()), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
             logger.exception("Exception in printer_detail")
             return jsonify({'error': 'An error occurred'}), 500
@@ -1459,9 +1462,9 @@ def create_app(config_name='development'):
                 order.printer_id = printer.id
             db.session.commit()
             return jsonify({'assigned_orders': [o.id for o in orders], 'printer': printer.to_dict()}), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/printers/utilization', methods=['GET'])
     @token_required
@@ -1485,8 +1488,8 @@ def create_app(config_name='development'):
                     'recent_7d_minutes': recent_minutes
                 })
             return jsonify({'utilization': summary}), 200
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     @app.route('/api/printers/maintenance', methods=['GET'])
     @token_required
@@ -1505,8 +1508,8 @@ def create_app(config_name='development'):
                     'next_maintenance_at': next_due.isoformat() if next_due else None
                 })
             return jsonify({'maintenance': data}), 200
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
 
     # ==================== ANALYTICS ROUTES ====================
     @app.route('/api/analytics/summary', methods=['GET'])
@@ -1530,7 +1533,7 @@ def create_app(config_name='development'):
                     # Get filament usage for this order
                     usages = FilamentUsage.query.filter_by(order_id=order.id).all()
                     for usage in usages:
-                        filament = Filament.query.get(usage.filament_id)
+                        filament = db.session.get(Filament, usage.filament_id)
                         if filament and filament.cost_per_gram:
                             total_filament_cost += usage.amount_used * filament.cost_per_gram
             
@@ -1575,8 +1578,8 @@ def create_app(config_name='development'):
                 'recent_revenue': round(recent_revenue, 2)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/analytics/revenue-trends', methods=['GET'])
     @token_required
@@ -1609,7 +1612,7 @@ def create_app(config_name='development'):
                 trends[key]['orders'] += 1
                 usages = FilamentUsage.query.filter_by(order_id=order.id).all()
                 for usage in usages:
-                    filament = Filament.query.get(usage.filament_id)
+                    filament = db.session.get(Filament, usage.filament_id)
                     if filament and filament.cost_per_gram:
                         cost = usage.amount_used * filament.cost_per_gram
                         trends[key]['filament_cost'] += cost
@@ -1632,8 +1635,8 @@ def create_app(config_name='development'):
             
             return jsonify({'period': period, 'trends': trends_list}), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/analytics/product-performance', methods=['GET'])
     @token_required
@@ -1699,8 +1702,8 @@ def create_app(config_name='development'):
                 'total_products': len(products_list)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== PRODUCTION QUEUE ROUTES ====================
     @app.route('/api/production/queue', methods=['GET'])
@@ -1719,8 +1722,8 @@ def create_app(config_name='development'):
                 'total': len(orders)
             }), 200
         
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/orders/<int:order_id>/production-status', methods=['PUT'])
     @token_required
@@ -1763,7 +1766,7 @@ def create_app(config_name='development'):
             db.session.commit()
             return jsonify(order.to_dict()), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
             logger.exception("Error updating production status")
             return jsonify({'error': 'Failed to update production status'}), 500
@@ -1788,9 +1791,9 @@ def create_app(config_name='development'):
             db.session.commit()
             return jsonify(order.to_dict()), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error updating order priority: {e}")
+            logger.exception("Error updating order priority")
             return jsonify({'error': 'Failed to update priority'}), 500
 
     @app.route('/api/orders/<int:order_id>/print-time', methods=['PUT'])
@@ -1812,9 +1815,9 @@ def create_app(config_name='development'):
             db.session.commit()
             return jsonify(order.to_dict()), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error updating print time: {e}")
+            logger.exception("Error updating print time")
             return jsonify({'error': 'Failed to update print time'}), 500
 
     @app.route('/api/print-sessions', methods=['GET', 'POST'])
@@ -1863,9 +1866,9 @@ def create_app(config_name='development'):
                 
                 return jsonify(session.to_dict()), 201
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/print-sessions/<int:session_id>', methods=['GET', 'PUT', 'DELETE'])
     @token_required
@@ -1923,9 +1926,9 @@ def create_app(config_name='development'):
                 db.session.commit()
                 return jsonify({'message': 'Print session deleted'}), 200
         
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error managing print session: {e}")
+            logger.exception("Error managing print session")
             return jsonify({'error': 'Failed to manage print session'}), 500
     
     # ==================== ADVANCED FEATURES ====================
@@ -1994,9 +1997,9 @@ def create_app(config_name='development'):
             db.session.commit()
             
             return jsonify(customer_file.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error uploading customer file: {e}")
+            logger.exception("Error uploading customer file")
             return jsonify({'error': 'Failed to upload file'}), 500
     
     @app.route('/api/files/<int:file_id>', methods=['GET', 'DELETE'])
@@ -2021,9 +2024,9 @@ def create_app(config_name='development'):
                 db.session.delete(file)
                 db.session.commit()
                 return jsonify({'message': 'File deleted'}), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error managing file: {e}")
+            logger.exception("Error managing file")
             return jsonify({'error': 'Failed to manage file'}), 500
     
     # Etsy Message Parsing
@@ -2088,11 +2091,11 @@ def create_app(config_name='development'):
                         })
                 
                 return jsonify({'messages': parsed_messages, 'total': len(parsed_messages)}), 200
-            except Exception as e:
-                print(f"Error fetching Etsy messages: {e}")
+            except Exception:
+                logger.exception("Error fetching Etsy messages")
                 return jsonify({'error': 'Failed to fetch messages'}), 500
-        except Exception as e:
-            print(f"Error in get_etsy_messages: {e}")
+        except Exception:
+            logger.exception("Error in get_etsy_messages")
             return jsonify({'error': 'Failed to retrieve messages'}), 500
     
     @app.route('/api/etsy/messages/<conversation_id>/create-request', methods=['POST'])
@@ -2123,9 +2126,9 @@ def create_app(config_name='development'):
             db.session.commit()
             
             return jsonify(req.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error creating customer request: {e}")
+            logger.exception("Error creating customer request")
             return jsonify({'error': 'Failed to create request'}), 500
     
     # Printer Connection & Monitoring
@@ -2162,9 +2165,9 @@ def create_app(config_name='development'):
             db.session.commit()
             
             return jsonify(connection.to_dict()), 201
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/printer-connections/<int:connection_id>/status', methods=['GET'])
     @token_required
@@ -2283,7 +2286,7 @@ def create_app(config_name='development'):
                 db.session.commit()
                 logger.warning("Printer status request failed for connection %d: %s", int(connection_id), type(e).__name__)
                 return jsonify({'error': 'Could not reach printer', 'connection_status': 'error'}), 502
-        except Exception as e:
+        except Exception:
             logger.exception("Exception in get_printer_status")
             return jsonify({'error': 'An error occurred'}), 500
     
@@ -2344,10 +2347,10 @@ def create_app(config_name='development'):
                     'temperature_c': round(temp, 1) if temp else None,
                     'tips': tips
                 }), 200
-            except Exception as e:
-                print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            except Exception:
+                logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== BAMBU CONNECT - MATERIALS ====================
     @app.route('/api/bambu/materials/<int:printer_id>', methods=['GET'])
@@ -2356,7 +2359,7 @@ def create_app(config_name='development'):
         """Get materials loaded on Bambu printer"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2364,8 +2367,8 @@ def create_app(config_name='development'):
             return jsonify([m.to_dict() for m in materials]), 200
         except HTTPException:
             raise
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/bambu/materials/<int:printer_id>', methods=['POST'])
     @token_required
@@ -2373,7 +2376,7 @@ def create_app(config_name='development'):
         """Add material to Bambu printer slot"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2394,9 +2397,9 @@ def create_app(config_name='development'):
             return jsonify(material.to_dict()), 201
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/bambu/materials/<int:material_id>', methods=['PUT'])
     @token_required
@@ -2404,8 +2407,8 @@ def create_app(config_name='development'):
         """Update material remaining percentage"""
         try:
             user_id = request.user.id
-            material = BambuMaterial.query.get_or_404(material_id)
-            printer = Printer.query.get(material.printer_id)
+            material = db.get_or_404(BambuMaterial, material_id)
+            printer = db.session.get(Printer, material.printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2419,15 +2422,15 @@ def create_app(config_name='development'):
             if 'weight_grams' in data:
                 material.weight_grams = data['weight_grams']
             
-            material.last_synced = datetime.utcnow()
-            material.updated_at = datetime.utcnow()
+            material.last_synced = utcnow()
+            material.updated_at = utcnow()
             db.session.commit()
             return jsonify(material.to_dict()), 200
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== BAMBU CONNECT - NOTIFICATIONS ====================
     @app.route('/api/bambu/notifications/<int:printer_id>', methods=['GET'])
@@ -2436,7 +2439,7 @@ def create_app(config_name='development'):
         """Get notification preferences for printer"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2457,9 +2460,9 @@ def create_app(config_name='development'):
             return jsonify(notif.to_dict()), 200
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/bambu/notifications/<int:printer_id>', methods=['PUT'])
     @token_required
@@ -2467,7 +2470,7 @@ def create_app(config_name='development'):
         """Update notification preferences"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2492,14 +2495,14 @@ def create_app(config_name='development'):
             if 'webhook_url' in data:
                 notif.webhook_url = data['webhook_url']
             
-            notif.updated_at = datetime.utcnow()
+            notif.updated_at = utcnow()
             db.session.commit()
             return jsonify(notif.to_dict()), 200
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     # ==================== BAMBU CONNECT - PRINT SCHEDULING ====================
     @app.route('/api/bambu/scheduled-prints/<int:printer_id>', methods=['GET'])
@@ -2508,7 +2511,7 @@ def create_app(config_name='development'):
         """Get scheduled print jobs for printer"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2528,8 +2531,8 @@ def create_app(config_name='development'):
             return jsonify([p.to_dict() for p in prints]), 200
         except HTTPException:
             raise
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/bambu/scheduled-prints', methods=['POST'])
     @token_required
@@ -2540,7 +2543,7 @@ def create_app(config_name='development'):
             data = request.json
             printer_id = data.get('printer_id')
             
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2566,9 +2569,9 @@ def create_app(config_name='development'):
             return jsonify(scheduled_print.to_dict()), 201
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'An error occurred'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
     
     @app.route('/api/bambu/scheduled-prints/<int:print_id>', methods=['PUT'])
     @token_required
@@ -2576,8 +2579,8 @@ def create_app(config_name='development'):
         """Update scheduled print job"""
         try:
             user_id = request.user.id
-            scheduled_print = ScheduledPrint.query.get_or_404(print_id)
-            printer = Printer.query.get(scheduled_print.printer_id)
+            scheduled_print = db.get_or_404(ScheduledPrint, print_id)
+            printer = db.session.get(Printer, scheduled_print.printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2593,21 +2596,21 @@ def create_app(config_name='development'):
             
             # Update actual execution times
             if data.get('status') == 'started' and not scheduled_print.started_at:
-                scheduled_print.started_at = datetime.utcnow()
+                scheduled_print.started_at = utcnow()
             elif data.get('status') == 'completed' and not scheduled_print.completed_at:
-                scheduled_print.completed_at = datetime.utcnow()
+                scheduled_print.completed_at = utcnow()
             elif data.get('status') == 'failed' and data.get('failed_reason'):
                 scheduled_print.failed_reason = data['failed_reason']
-                scheduled_print.completed_at = datetime.utcnow()
+                scheduled_print.completed_at = utcnow()
             
-            scheduled_print.updated_at = datetime.utcnow()
+            scheduled_print.updated_at = utcnow()
             db.session.commit()
             return jsonify(scheduled_print.to_dict()), 200
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error updating scheduled print: {e}")
+            logger.exception("Error updating scheduled print")
             return jsonify({'error': 'Failed to update scheduled print'}), 500
     
     @app.route('/api/bambu/scheduled-prints/<int:print_id>', methods=['DELETE'])
@@ -2616,8 +2619,8 @@ def create_app(config_name='development'):
         """Cancel/delete scheduled print job"""
         try:
             user_id = request.user.id
-            scheduled_print = ScheduledPrint.query.get_or_404(print_id)
-            printer = Printer.query.get(scheduled_print.printer_id)
+            scheduled_print = db.get_or_404(ScheduledPrint, print_id)
+            printer = db.session.get(Printer, scheduled_print.printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2626,9 +2629,9 @@ def create_app(config_name='development'):
             return jsonify({'message': 'Print job deleted'}), 200
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error deleting scheduled print: {e}")
+            logger.exception("Error deleting scheduled print")
             return jsonify({'error': 'Failed to delete print job'}), 500
     
     @app.route('/api/bambu/scheduled-prints/<int:printer_id>/queue', methods=['GET'])
@@ -2637,7 +2640,7 @@ def create_app(config_name='development'):
         """Get current print queue (queued and scheduled statuses)"""
         try:
             user_id = request.user.id
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2652,8 +2655,8 @@ def create_app(config_name='development'):
             return jsonify([p.to_dict() for p in queue]), 200
         except HTTPException:
             raise
-        except Exception as e:
-            print(f"Error getting print queue: {e}")
+        except Exception:
+            logger.exception("Error getting print queue")
             return jsonify({'error': 'Failed to get print queue'}), 500
     
     @app.route('/api/orders/<int:order_id>/schedule-prints', methods=['POST'])
@@ -2662,7 +2665,7 @@ def create_app(config_name='development'):
         """Schedule all items in an order for printing"""
         try:
             user_id = request.user.id
-            order = Order.query.get_or_404(order_id)
+            order = db.get_or_404(Order, order_id)
             if order.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2675,7 +2678,7 @@ def create_app(config_name='development'):
                 return jsonify({'error': 'printer_id required'}), 400
             
             # Verify printer exists and belongs to user
-            printer = Printer.query.get_or_404(printer_id)
+            printer = db.get_or_404(Printer, printer_id)
             if printer.user_id != user_id:
                 return jsonify({'error': 'Unauthorized'}), 403
             
@@ -2693,13 +2696,13 @@ def create_app(config_name='development'):
                 'prints': [p.to_dict() for p in scheduled]
             }), 201
         except ValueError as e:
-            print(f"Validation error scheduling prints: {e}")
+            logger.info("Invalid scheduling parameters: %s", type(e).__name__)
             return jsonify({'error': 'Invalid scheduling parameters'}), 400
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f"Error scheduling prints: {e}")
+            logger.exception("Error scheduling prints")
             return jsonify({'error': 'Failed to schedule prints'}), 500
     
     # ==================== DEVICE API ====================
@@ -2789,7 +2792,7 @@ def create_app(config_name='development'):
             if not isinstance(reports, list):
                 return jsonify({'error': 'printers must be a list'}), 400
 
-            now = datetime.utcnow()
+            now = utcnow()
             matched, unknown = [], []
             for report in reports[:50]:
                 if not isinstance(report, dict):
@@ -2953,12 +2956,12 @@ def create_app(config_name='development'):
                           'ntfy_server', 'ntfy_topic', 'ntfy_token']:
                 if field in data:
                     setattr(settings, field, data[field])
-            settings.updated_at = datetime.utcnow()
+            settings.updated_at = utcnow()
             db.session.commit()
             return jsonify(settings.to_dict()), 200
-        except Exception as e:
+        except Exception:
             db.session.rollback()
-            print(f'Exception: {e}'); return jsonify({'error': 'Failed to update alert settings'}), 500
+            logger.exception("Unhandled error"); return jsonify({'error': 'Failed to update alert settings'}), 500
 
     @app.route('/api/alerts/preview', methods=['GET'])
     @token_required
@@ -2977,7 +2980,7 @@ def create_app(config_name='development'):
                     issues.append(p.to_dict())
 
             return jsonify({'low_stock': low_stock, 'printer_issues': issues}), 200
-        except Exception as e:
+        except Exception:
             logger.exception("Exception in preview_alerts")
             return jsonify({'error': 'Failed to preview alerts'}), 500
 
@@ -3062,7 +3065,7 @@ def create_app(config_name='development'):
                 smtp.send_message(msg)
             return True
         except Exception as e:
-            print(f"Email send failed: {e}")
+            logger.error("Email send failed: %s", type(e).__name__)
             return False
 
     @app.route('/api/alerts/trigger', methods=['POST'])
@@ -3119,8 +3122,8 @@ def create_app(config_name='development'):
                 'low_stock_count': len(low_stock_filaments),
                 'printer_issue_count': len(issue_printers)
             }), 200
-        except Exception as e:
-            print(f'Exception: {e}'); return jsonify({'error': 'Failed to trigger alerts'}), 500
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'Failed to trigger alerts'}), 500
 
     return app
 

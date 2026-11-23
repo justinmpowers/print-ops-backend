@@ -2,11 +2,11 @@
 validation and per-user isolation. A safety net for refactoring app.py, not a substitute for
 focused tests of each area."""
 import re
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
-from models import db, Customer, Filament, Order, OrderItem, Printer, ProductProfile, ScheduledPrint, User
+from models import utcnow, db, Customer, Filament, Order, OrderItem, Printer, ProductProfile, ScheduledPrint, User
 
 # Routes that are deliberately reachable without a user session.
 PUBLIC = {'/api/health', '/api/auth/login', '/api/auth/callback', '/api/auth/refresh'}
@@ -39,7 +39,7 @@ def _concrete(rule):
 
 def _order(user, n=1, **kwargs):
     order = Order(user_id=user.id, etsy_order_id=f'{user.id}-{n}', etsy_shop_id='shop', buyer_name='Buyer',
-                  total_amount=20.0, currency='USD', status='PENDING', created_at=datetime.utcnow() - timedelta(days=n),
+                  total_amount=20.0, currency='USD', status='PENDING', created_at=utcnow() - timedelta(days=n),
                   production_status='QUEUED', **kwargs)
     db.session.add(order)
     db.session.flush()
@@ -118,7 +118,7 @@ def test_filament_crud(client, user, auth):
 
     updated = client.put(f'/api/filaments/{fid}', headers=auth, json={'current_amount': 50})
     assert updated.status_code == 200
-    assert Filament.query.get(fid).current_amount == 50
+    assert db.session.get(Filament, fid).current_amount == 50
 
     assert client.delete(f'/api/filaments/{fid}', headers=auth).status_code == 200
     assert Filament.query.count() == 0
@@ -140,7 +140,7 @@ def test_product_profile_crud(client, user, auth):
     pid = created.get_json()['id']
 
     assert client.put(f'/api/product-profiles/{pid}', headers=auth, json={'category': 'Toys'}).status_code == 200
-    assert ProductProfile.query.get(pid).category == 'Toys'
+    assert db.session.get(ProductProfile, pid).category == 'Toys'
 
     assert client.delete(f'/api/product-profiles/{pid}', headers=auth).status_code == 200
     assert ProductProfile.query.count() == 0
@@ -161,7 +161,7 @@ def test_printer_crud(client, user, auth):
 
     assert client.get(f'/api/printers/{pid}', headers=auth).get_json()['name'] == 'X1 Carbon'
     assert client.put(f'/api/printers/{pid}', headers=auth, json={'status': 'MAINTENANCE'}).status_code == 200
-    assert Printer.query.get(pid).status == 'MAINTENANCE'
+    assert db.session.get(Printer, pid).status == 'MAINTENANCE'
     assert client.delete(f'/api/printers/{pid}', headers=auth).status_code == 200
     assert Printer.query.count() == 0
 
@@ -186,12 +186,12 @@ def test_production_status_flow(client, user, auth):
 
     assert client.put(url, headers=auth, json={'production_status': 'NOPE'}).status_code == 400
     assert client.put(url, headers=auth, json={'production_status': 'PRINTING'}).status_code == 200
-    assert Order.query.get(order.id).print_started_at is not None
+    assert db.session.get(Order, order.id).print_started_at is not None
     # Back-date the start so the recorded print time is checkable.
-    Order.query.get(order.id).print_started_at = datetime.utcnow() - timedelta(minutes=90)
+    db.session.get(Order, order.id).print_started_at = utcnow() - timedelta(minutes=90)
     db.session.commit()
     assert client.put(url, headers=auth, json={'production_status': 'PRINTED'}).status_code == 200
-    done = Order.query.get(order.id)
+    done = db.session.get(Order, order.id)
     assert done.print_completed_at is not None
     assert done.actual_print_time in (89, 90)
 
@@ -249,6 +249,6 @@ def test_cannot_read_or_change_another_users_records(client, user, auth, other_u
                            json={'production_status': 'PRINTED', 'priority': 1, 'status': 'IDLE'} if method != 'GET' else None)
         assert resp.status_code in (403, 404), f'{method} {path} answered {resp.status_code} for another user\'s record'
 
-    assert Order.query.get(order.id).production_status == 'QUEUED'
+    assert db.session.get(Order, order.id).production_status == 'QUEUED'
     assert Filament.query.count() == 1 and Printer.query.count() == 1 and ProductProfile.query.count() == 1
     assert ScheduledPrint.query.count() == 1

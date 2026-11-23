@@ -48,7 +48,7 @@ def test_sync_does_not_clobber_hand_edited_profile(app, user):
     fake = FakeEtsyAPI([make_listing()])
     ListingSyncManager.sync_listings_from_etsy(user, 'shop1', fake)
 
-    reloaded = ProductProfile.query.get(manual.id)
+    reloaded = db.session.get(ProductProfile, manual.id)
     assert reloaded.product_name == 'Manual Widget'
     assert reloaded.standard_filament_amount == 25
 

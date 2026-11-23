@@ -76,7 +76,7 @@ def test_cannot_revoke_another_users_key(client, user, token):
     db.session.add(record)
     db.session.commit()
     assert client.delete(f'/api/devices/{record.id}', headers=_auth(token)).status_code == 404
-    assert DeviceKey.query.get(record.id).revoked_at is None
+    assert db.session.get(DeviceKey, record.id).revoked_at is None
 
 
 def test_started_then_finished_records_a_print_and_updates_printer(client, user, token):
@@ -89,7 +89,7 @@ def test_started_then_finished_records_a_print_and_updates_printer(client, user,
     job = ScheduledPrint.query.one()
     assert (job.status, job.job_name, job.printer_id) == ('started', 'benchy', printer.id)
     assert job.started_at is not None
-    assert Printer.query.get(printer.id).status == 'PRINTING'
+    assert db.session.get(Printer, printer.id).status == 'PRINTING'
     assert printer.connection.status == 'connected'
 
     resp = _event(client, key, printer={'serial_number': 'AC12345'}, event='finished', job_name='benchy')
@@ -97,7 +97,7 @@ def test_started_then_finished_records_a_print_and_updates_printer(client, user,
     assert ScheduledPrint.query.count() == 1
     job = ScheduledPrint.query.one()
     assert job.status == 'completed' and job.completed_at is not None
-    assert Printer.query.get(printer.id).status == 'IDLE'
+    assert db.session.get(Printer, printer.id).status == 'IDLE'
 
 
 def test_failed_event_records_reason(client, user, token):
