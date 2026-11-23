@@ -19,7 +19,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
-from config import config, check_secret_key
+from config import config, token_signing_issue, SIGNING_ISSUE_MESSAGES
 from models import utcnow, db, PrinterLiveStatus, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
 from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyManager, device_required
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
@@ -98,9 +98,9 @@ def create_app(config_name='development'):
 
     # Load configuration
     app.config.from_object(config[config_name])
-    secret_warning = check_secret_key(app.config.get('SECRET_KEY'), production=config_name == 'production')
-    if secret_warning and not app.config.get('TESTING'):
-        logger.warning(secret_warning)
+    signing_issue = token_signing_issue(app.config.get('SECRET_KEY'), production=config_name == 'production')
+    if signing_issue and not app.config.get('TESTING'):
+        logger.warning(SIGNING_ISSUE_MESSAGES[signing_issue])
 
     # Uploads
     app.config['UPLOAD_FOLDER'] = os.path.join(app.instance_path, 'uploads')
