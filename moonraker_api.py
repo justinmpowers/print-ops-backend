@@ -21,7 +21,14 @@ STATE_MAP = {
 
 
 class MoonrakerError(Exception):
-    """Raised when Moonraker can't be reached or Klipper isn't ready."""
+    """Raised when Moonraker can't be reached or Klipper isn't ready.
+
+    `user_message` is one of the fixed strings below, safe to show the client. Read it through
+    that attribute rather than str(e), so no exception text can ever reach an HTTP response.
+    """
+    def __init__(self, user_message):
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
 def parse_status(status: dict) -> dict:

@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-pytest')
+os.environ.setdefault('SECRET_KEY', 'test-secret-key-for-pytest-0123456789abcdef')
 os.environ.setdefault('ETSY_CLIENT_ID', 'test-client-id')
 os.environ.setdefault('ETSY_CLIENT_SECRET', 'test-client-secret')
 

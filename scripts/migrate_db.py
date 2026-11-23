@@ -111,7 +111,7 @@ def main():
         print(f"Generating migration: {args.message}")
         try:
             migrate_migrate(directory=str(migrations_dir), message=args.message)
-            print(f"✓ Migration generated successfully")
+            print("✓ Migration generated successfully")
         except Exception as e:
             error_msg = str(e)
             

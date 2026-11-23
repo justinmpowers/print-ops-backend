@@ -1,4 +1,3 @@
-import os
 import logging
 import requests
 import jwt
@@ -6,10 +5,10 @@ import secrets
 import hashlib
 import base64
 from functools import wraps
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from urllib.parse import urlencode
 from flask import current_app, request, jsonify, session
-from models import db, User, RefreshToken, DeviceKey
+from models import utcnow, db, User, RefreshToken, DeviceKey
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,8 @@ class EtsyOAuth:
             data['client_secret'] = current_app.config['ETSY_CLIENT_SECRET']
 
         try:
-            response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data)
+            response = requests.post(EtsyOAuth.ETSY_TOKEN_URL, data=data,
+                                     timeout=current_app.config.get('HTTP_TIMEOUT', 10))
             response.raise_for_status()
             token_data = response.json()
 
@@ -94,7 +94,7 @@ class EtsyOAuth:
         response = requests.get(url, headers={
             'Authorization': f'Bearer {access_token}',
             'x-api-key': f"{current_app.config['ETSY_CLIENT_ID']}:{current_app.config['ETSY_CLIENT_SECRET']}"
-        })
+        }, timeout=current_app.config.get('HTTP_TIMEOUT', 10))
         if not response.ok:
             logger.warning(f"[get_user_profile] {response.status_code}: {response.text[:200]}")
             response.raise_for_status()
@@ -161,8 +161,8 @@ class TokenManager:
 
         payload = {
             'user_id': user_id,
-            'iat': datetime.utcnow(),
-            'exp': datetime.utcnow() + timedelta(minutes=expires_in_minutes)
+            'iat': utcnow(),
+            'exp': utcnow() + timedelta(minutes=expires_in_minutes)
         }
 
         token = jwt.encode(
@@ -199,7 +199,7 @@ class TokenManager:
         record = RefreshToken(
             user_id=user_id,
             token_hash=TokenManager._hash_refresh_token(raw_token),
-            expires_at=datetime.utcnow() + timedelta(days=days)
+            expires_at=utcnow() + timedelta(days=days)
         )
         db.session.add(record)
         return raw_token
@@ -221,10 +221,10 @@ class TokenManager:
         """
         token_hash = TokenManager._hash_refresh_token(raw_token)
         record = RefreshToken.query.filter_by(token_hash=token_hash).first()
-        if not record or record.revoked_at is not None or record.expires_at < datetime.utcnow():
+        if not record or record.revoked_at is not None or record.expires_at < utcnow():
             return None
 
-        record.revoked_at = datetime.utcnow()
+        record.revoked_at = utcnow()
         access_token, refresh_token = TokenManager.create_token_pair(record.user_id)
         return access_token, refresh_token
 
@@ -234,7 +234,7 @@ class TokenManager:
         token_hash = TokenManager._hash_refresh_token(raw_token)
         record = RefreshToken.query.filter_by(token_hash=token_hash).first()
         if record and record.revoked_at is None:
-            record.revoked_at = datetime.utcnow()
+            record.revoked_at = utcnow()
             db.session.commit()
 
 class DeviceKeyManager:
@@ -279,11 +279,11 @@ def device_required(f):
         if not record:
             return jsonify({'message': 'Invalid or missing device key'}), 401
 
-        user = User.query.get(record.user_id)
+        user = db.session.get(User, record.user_id)
         if not user:
             return jsonify({'message': 'User not found'}), 404
 
-        record.last_used_at = datetime.utcnow()
+        record.last_used_at = utcnow()
         db.session.commit()
 
         request.user = user
@@ -313,7 +313,7 @@ def token_required(f):
         if not payload:
             return jsonify({'message': 'Invalid or expired token'}), 401
         
-        user = User.query.get(payload['user_id'])
+        user = db.session.get(User, payload['user_id'])
         
         if not user:
             return jsonify({'message': 'User not found'}), 404

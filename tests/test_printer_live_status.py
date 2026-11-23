@@ -60,11 +60,11 @@ def test_state_mapping_and_maintenance_is_kept(client, user, token):
     p = _printer(user)
     for state, expected in [('offline', 'OFFLINE'), ('error', 'ERROR'), ('failed', 'IDLE'), ('paused', 'PRINTING')]:
         _post(client, key, [{**X1, 'state': state}])
-        assert Printer.query.get(p.id).status == expected, state
-    Printer.query.get(p.id).status = 'MAINTENANCE'
+        assert db.session.get(Printer, p.id).status == expected, state
+    db.session.get(Printer, p.id).status = 'MAINTENANCE'
     db.session.commit()
     _post(client, key, [{**X1, 'state': 'printing'}])
-    assert Printer.query.get(p.id).status == 'MAINTENANCE'
+    assert db.session.get(Printer, p.id).status == 'MAINTENANCE'
 
 
 def test_unknown_printers_are_reported_not_fatal(client, user, token):

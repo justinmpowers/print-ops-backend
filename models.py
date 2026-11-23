@@ -1,7 +1,15 @@
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 db = SQLAlchemy()
+
+
+def utcnow():
+    """Current UTC time as a naive datetime, the form every DateTime column here stores.
+
+    Replaces utcnow(), which is deprecated since Python 3.12; same value.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class User(db.Model):
     """User model to store Etsy user information"""
@@ -16,8 +24,8 @@ class User(db.Model):
     access_token = db.Column(db.Text, nullable=False)
     refresh_token = db.Column(db.Text)
     token_expires_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     # Relationships
     filaments = db.relationship('Filament', backref='user', lazy=True, cascade='all, delete-orphan')
@@ -46,7 +54,7 @@ class RefreshToken(db.Model):
     token_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
     expires_at = db.Column(db.DateTime, nullable=False)
     revoked_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
 
 class DeviceKey(db.Model):
@@ -60,7 +68,7 @@ class DeviceKey(db.Model):
     key_prefix = db.Column(db.String(12), nullable=False)  # shown in the UI to tell keys apart
     last_used_at = db.Column(db.DateTime)
     revoked_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -87,8 +95,8 @@ class Customer(db.Model):
     last_order_at = db.Column(db.DateTime)
     order_count = db.Column(db.Integer, default=0)
     total_spend = db.Column(db.Float, default=0.0)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     orders = db.relationship('Order', backref='customer', lazy=True)
     requests = db.relationship('CustomerRequest', backref='customer', lazy=True, cascade='all, delete-orphan')
@@ -133,8 +141,8 @@ class Filament(db.Model):
     unit = db.Column(db.String(50), default='g')  # g for grams
     cost_per_gram = db.Column(db.Float)
     low_stock_threshold = db.Column(db.Float, default=100.0)  # Alert when below this amount
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     # Relationships
     usage_logs = db.relationship('FilamentUsage', backref='filament', lazy=True, cascade='all, delete-orphan')
@@ -165,7 +173,7 @@ class FilamentUsage(db.Model):
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'))
     amount_used = db.Column(db.Float, nullable=False)  # grams
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     
     def to_dict(self):
         return {
@@ -191,8 +199,8 @@ class Printer(db.Model):
     notes = db.Column(db.Text)
     maintenance_interval_days = db.Column(db.Integer, default=30)
     last_maintenance_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     orders = db.relationship('Order', backref='printer', lazy=True)
 
@@ -276,7 +284,7 @@ class Order(db.Model):
     filament_usage = db.relationship('FilamentUsage', backref='order', lazy=True)
     
     # Local tracking
-    synced_at = db.Column(db.DateTime, default=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, default=utcnow)
     
     def to_dict(self):
         return {
@@ -325,7 +333,7 @@ class OrderNote(db.Model):
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     content = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -347,7 +355,7 @@ class CommunicationLog(db.Model):
     direction = db.Column(db.String(20), default='outbound')  # outbound | inbound
     channel = db.Column(db.String(50), default='message')      # email, message, phone, other
     message = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -373,8 +381,8 @@ class CustomerRequest(db.Model):
     status = db.Column(db.String(50), default='open')  # open, in_progress, delivered, canceled
     priority = db.Column(db.String(20), default='normal')  # low, normal, high
     desired_by = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     def to_dict(self):
         return {
@@ -402,7 +410,7 @@ class CustomerFeedback(db.Model):
     rating = db.Column(db.Integer)
     comment = db.Column(db.Text)
     source = db.Column(db.String(50), default='manual')  # etsy, manual
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -427,8 +435,8 @@ class Expense(db.Model):
     amount = db.Column(db.Float, nullable=False)
     currency = db.Column(db.String(10), default='USD')
     description = db.Column(db.Text)
-    expense_date = db.Column(db.DateTime, default=datetime.utcnow)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expense_date = db.Column(db.DateTime, default=utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -458,7 +466,7 @@ class CustomerFile(db.Model):
     file_size = db.Column(db.Integer)  # bytes
     mime_type = db.Column(db.String(100))
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def to_dict(self):
         return {
@@ -492,7 +500,7 @@ class PrinterLiveStatus(db.Model):
     nozzle_temp = db.Column(db.Float)
     bed_temp = db.Column(db.Float)
     message = db.Column(db.String(500))
-    reported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    reported_at = db.Column(db.DateTime, nullable=False, default=utcnow)
 
     printer = db.relationship('Printer', backref=db.backref('live_status', uselist=False, cascade='all, delete-orphan'))
 
@@ -507,7 +515,7 @@ class PrinterLiveStatus(db.Model):
             'bed_temp': self.bed_temp,
             'message': self.message,
             'reported_at': self.reported_at.isoformat() if self.reported_at else None,
-            'age_seconds': int((datetime.utcnow() - self.reported_at).total_seconds()) if self.reported_at else None,
+            'age_seconds': int((utcnow() - self.reported_at).total_seconds()) if self.reported_at else None,
         }
 
 
@@ -526,8 +534,8 @@ class PrinterConnection(db.Model):
     webhook_enabled = db.Column(db.Boolean, default=False)
     last_connected_at = db.Column(db.DateTime)
     status = db.Column(db.String(50), default='disconnected')  # connected, disconnected, error
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     printer = db.relationship('Printer', backref=db.backref('connection', uselist=False), uselist=False)
 
@@ -581,8 +589,8 @@ class PrintSession(db.Model):
     started_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     # Relationships
     orders = db.relationship('Order', backref='print_session', lazy=True)
@@ -639,8 +647,8 @@ class ProductProfile(db.Model):
     # Manyfold link
     manyfold_model_id = db.Column(db.String(255))
     manyfold_model_url = db.Column(db.String(500))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'etsy_listing_id', name='uq_product_profiles_user_etsy_listing'),
@@ -703,10 +711,10 @@ class BambuMaterial(db.Model):
     remaining_pct = db.Column(db.Float, default=100)  # Percentage remaining
     vendor = db.Column(db.String(255))
     cost_per_kg = db.Column(db.Float)
-    loaded_at = db.Column(db.DateTime, default=datetime.utcnow)
+    loaded_at = db.Column(db.DateTime, default=utcnow)
     last_synced = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     def to_dict(self):
         return {
@@ -746,8 +754,8 @@ class PrintNotification(db.Model):
     email_enabled = db.Column(db.Boolean, default=True)
     webhook_url = db.Column(db.String(500))  # Custom webhook for alerts
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     def to_dict(self):
         return {
@@ -798,8 +806,8 @@ class ScheduledPrint(db.Model):
     priority = db.Column(db.Integer, default=0)  # Higher = print sooner
     notes = db.Column(db.Text)
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
     
     def to_dict(self):
         return {
@@ -839,8 +847,8 @@ class AlertSettings(db.Model):
     ntfy_server = db.Column(db.String(255))  # defaults to https://ntfy.sh when blank
     ntfy_topic = db.Column(db.String(100))
     ntfy_token = db.Column(db.String(200))  # only for servers that require auth
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     def to_dict(self):
         return {
@@ -868,8 +876,8 @@ class ManyfoldSettings(db.Model):
     base_url = db.Column(db.String(500))
     client_id = db.Column(db.String(255))
     client_secret = db.Column(db.String(255))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
     def to_dict(self):
         return {

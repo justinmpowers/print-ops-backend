@@ -2,10 +2,17 @@ import html
 import requests
 from datetime import datetime, timedelta, timezone
 from flask import current_app
-from models import db, Order, OrderItem, Customer, ScheduledPrint, ProductProfile
+from models import utcnow, db, Order, OrderItem, Customer, ScheduledPrint, ProductProfile
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _as_utc(dt):
+    """A datetime as timezone-aware UTC; naive values from the database are UTC already."""
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
 
 
 def _unescape(value):
@@ -193,9 +200,12 @@ class OrderSyncManager:
                 elif add_order:
                     customer.order_count = (customer.order_count or 0) + 1
                     customer.total_spend = (customer.total_spend or 0) + order_value
-                    if not customer.first_order_at or order_created_at < customer.first_order_at:
+                    # Stored values come back from the database without a timezone (they're UTC);
+                    # compare them as UTC, or a returning customer aborts the whole sync.
+                    first, last = _as_utc(customer.first_order_at), _as_utc(customer.last_order_at)
+                    if not first or order_created_at < first:
                         customer.first_order_at = order_created_at
-                    if not customer.last_order_at or order_created_at > customer.last_order_at:
+                    if not last or order_created_at > last:
                         customer.last_order_at = order_created_at
 
                 return customer
@@ -259,7 +269,9 @@ class OrderSyncManager:
                             )
                             order.items.append(item)
                     except Exception as e:
-                        pass  # Silently ignore transaction fetch errors
+                        # The order is still saved without its line items; note why.
+                        logger.warning("Could not fetch transactions for receipt %s: %s",
+                                       receipt_id, type(e).__name__)
                     
                     db.session.add(order)
                     saved_count += 1
@@ -331,7 +343,7 @@ class ListingSyncManager:
 
             created_count = 0
             updated_count = 0
-            now = datetime.utcnow()
+            now = utcnow()
 
             for listing in all_listings:
                 listing_id = str(listing['listing_id'])
@@ -423,16 +435,16 @@ def schedule_order_prints(user_id, order_id, printer_id, material_type=None, sta
     """
     from models import Printer
     
-    order = Order.query.get(order_id)
+    order = db.session.get(Order, order_id)
     if not order:
         raise ValueError(f"Order {order_id} not found")
     
-    printer = Printer.query.get(printer_id)
+    printer = db.session.get(Printer, printer_id)
     if not printer or printer.user_id != user_id:
         raise ValueError(f"Printer {printer_id} not found or unauthorized")
     
     scheduled_prints = []
-    current_start_time = datetime.utcnow() + timedelta(minutes=start_offset_minutes)
+    current_start_time = utcnow() + timedelta(minutes=start_offset_minutes)
     
     for idx, item in enumerate(order.items):
         # Try to find product profile for print settings

@@ -69,13 +69,13 @@ def main():
             print("Applying migrations...")
             try:
                 migrate_upgrade(directory=str(migrations_dir))
-                print(f"✓ Migrations applied")
+                print("✓ Migrations applied")
             except Exception as e:
                 print(f"✗ Migration upgrade failed: {e}")
                 return
         else:
             db.create_all()
-            print(f"✓ Created tables via create_all()")
+            print("✓ Created tables via create_all()")
         
         print(f"Database ready: config={args.config} at {safe_db_url(app.config['SQLALCHEMY_DATABASE_URI'])}")
 
