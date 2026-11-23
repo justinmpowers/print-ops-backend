@@ -2236,7 +2236,7 @@ def create_app(config_name='development'):
                     connection.status = 'error'
                     db.session.commit()
                     logger.warning("Moonraker status request failed for connection %d: %s", int(connection_id), e)
-                    return jsonify({'error': 'Could not reach printer', 'connection_status': 'error'}), 502
+                    return jsonify({'error': e.user_message, 'connection_status': 'error'}), 502
                 connection.status = 'connected'
                 connection.last_connected_at = datetime.now(timezone.utc)
                 db.session.commit()
