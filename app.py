@@ -302,10 +302,9 @@ def create_app(config_name='development'):
         user.shop_id = shop['shop_id']
         user.shop_name = shop.get('shop_name', shop_name)
         db.session.commit()
-        # repr() escapes control characters (\r, \n) in shop_name, which can
-        # otherwise come from the user-submitted request body and be used to
-        # forge/inject fake log lines.
-        logger.info("Linked shop %r (id=%r) for user %r", user.shop_name, user.shop_id, user.etsy_user_id)
+        # Ids only: shop_name can come from the request body, and logging it would let a
+        # crafted name forge log lines.
+        logger.info("Linked shop id=%s for user %s", user.shop_id, user.etsy_user_id)
         return jsonify({'shop_id': user.shop_id, 'shop_name': user.shop_name}), 200
 
     # ==================== ORDER ROUTES ====================

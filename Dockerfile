@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
+# The base image's own pip and setuptools lag behind security fixes, and image scanners flag them.
+RUN pip install --no-cache-dir --root-user-action=ignore --upgrade pip setuptools
+
 # Create non-root user for running the application
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
