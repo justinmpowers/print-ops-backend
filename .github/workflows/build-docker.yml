@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+# Least privilege by default; build-and-push asks for packages: write itself.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: justinmpowers/print-ops-backend

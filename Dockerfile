@@ -1,6 +1,6 @@
 # Multi-stage build for Python backend
 ARG VERSION=dev
-FROM python:3.11-slim as builder
+FROM python:3.15-slim as builder
 
 # Set working directory
 WORKDIR /app
@@ -16,12 +16,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Final stage - minimal runtime image
-FROM python:3.11-slim
+FROM python:3.15-slim
 
-# Install postgresql-client for pg_isready
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
+# Install postgresql-client for pg_isready, and apply Debian security updates released since the
+# base image was last rebuilt (the image scan in security-scan.yml flags those).
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
+
+# The base image's own pip and setuptools lag behind security fixes, and image scanners flag them.
+RUN pip install --no-cache-dir --root-user-action=ignore --upgrade pip setuptools
 
 # Create non-root user for running the application
 RUN groupadd -r appuser && useradd -r -g appuser appuser
