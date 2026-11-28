@@ -1,12 +1,16 @@
 # Weekly pull requests that keep dependencies current. Security fixes don't wait for this schedule:
 # Dependabot security updates (on in the repository settings) open those as soon as an advisory lands.
 # Not covered: the scanner images pinned by digest in workflows/security-scan.yml; bump those by hand.
+# cooldown: wait 7 days before proposing a newly published version, so a compromised release is
+# usually caught and pulled first (as with Trivy in March 2026). Security updates skip the wait.
 version: 2
 updates:
   - package-ecosystem: pip
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       python-minor-and-patch:
         update-types: [minor, patch]
@@ -16,12 +20,16 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   # Actions are pinned to commit SHAs; Dependabot updates the SHA and its version comment together.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
