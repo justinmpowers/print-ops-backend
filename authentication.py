@@ -12,6 +12,16 @@ from models import utcnow, db, User, RefreshToken, DeviceKey
 
 logger = logging.getLogger(__name__)
 
+
+class EtsyTokenRefreshError(Exception):
+    """Etsy wouldn't renew the stored Etsy token. `rejected` is True when Etsy answered and said no
+    (expired or revoked refresh token), so only logging in with Etsy again fixes it; False for
+    network trouble, which may pass on its own."""
+    def __init__(self, message, rejected):
+        super().__init__(message)
+        self.rejected = rejected
+
+
 class EtsyOAuth:
     """Handle Etsy 3-legged OAuth authentication"""
 
@@ -129,7 +139,9 @@ class EtsyOAuth:
 
     @staticmethod
     def refresh_access_token(refresh_token):
-        """Refresh an expired access token"""
+        """Refresh an expired access token. Raises EtsyTokenRefreshError on failure."""
+        if not refresh_token:
+            raise EtsyTokenRefreshError('No Etsy refresh token stored', rejected=True)
         data = {
             'grant_type': 'refresh_token',
             'client_id': current_app.config['ETSY_CLIENT_ID'],
@@ -146,7 +158,9 @@ class EtsyOAuth:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to refresh token: {str(e)}")
+            status = getattr(e.response, 'status_code', None)
+            # 400/401 is Etsy's invalid_grant: the refresh token expired (90 days unused) or was revoked.
+            raise EtsyTokenRefreshError(f"Failed to refresh token: {e}", rejected=status in (400, 401))
 
 class TokenManager:
     """Manage JWT access tokens + opaque refresh tokens for session management"""
@@ -192,23 +206,30 @@ class TokenManager:
         return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
 
     @staticmethod
-    def create_refresh_token(user_id):
+    def refresh_token_days(remember_me):
+        """How long a refresh token lives. Each refresh rotates it, so this is time since last use."""
+        if remember_me:
+            return current_app.config.get('REMEMBER_ME_REFRESH_TOKEN_DAYS', 90)
+        return current_app.config.get('REFRESH_TOKEN_EXPIRATION_DAYS', 14)
+
+    @staticmethod
+    def create_refresh_token(user_id, remember_me=False):
         """Issue a new opaque refresh token, persisting only its hash."""
         raw_token = secrets.token_urlsafe(48)
-        days = current_app.config.get('REFRESH_TOKEN_EXPIRATION_DAYS', 14)
         record = RefreshToken(
             user_id=user_id,
             token_hash=TokenManager._hash_refresh_token(raw_token),
-            expires_at=utcnow() + timedelta(days=days)
+            expires_at=utcnow() + timedelta(days=TokenManager.refresh_token_days(remember_me)),
+            remember_me=bool(remember_me),
         )
         db.session.add(record)
         return raw_token
 
     @staticmethod
-    def create_token_pair(user_id):
+    def create_token_pair(user_id, remember_me=False):
         """Issue a fresh access token + refresh token, committing the refresh row."""
         access_token = TokenManager.create_token(user_id)
-        refresh_token = TokenManager.create_refresh_token(user_id)
+        refresh_token = TokenManager.create_refresh_token(user_id, remember_me)
         db.session.commit()
         return access_token, refresh_token
 
@@ -225,7 +246,7 @@ class TokenManager:
             return None
 
         record.revoked_at = utcnow()
-        access_token, refresh_token = TokenManager.create_token_pair(record.user_id)
+        access_token, refresh_token = TokenManager.create_token_pair(record.user_id, record.remember_me)
         return access_token, refresh_token
 
     @staticmethod

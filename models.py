@@ -55,6 +55,9 @@ class RefreshToken(db.Model):
     expires_at = db.Column(db.DateTime, nullable=False)
     revoked_at = db.Column(db.DateTime)
     created_at = db.Column(db.DateTime, default=utcnow)
+    # "Keep me signed in" at login: the session lasts REMEMBER_ME_REFRESH_TOKEN_DAYS instead of
+    # REFRESH_TOKEN_EXPIRATION_DAYS, and each rotated token carries the choice forward.
+    remember_me = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
 
 class DeviceKey(db.Model):
@@ -141,18 +144,40 @@ class Filament(db.Model):
     unit = db.Column(db.String(50), default='g')  # g for grams
     cost_per_gram = db.Column(db.Float)
     low_stock_threshold = db.Column(db.Float, default=100.0)  # Alert when below this amount
+    brand = db.Column(db.String(255))
+    location = db.Column(db.String(255))   # where the spool lives: shelf, dry box, printer/AMS slot
+    spool_weight = db.Column(db.Float)     # grams of the empty spool, so a scale reading gives what's left
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
-    
+
     # Relationships
     usage_logs = db.relationship('FilamentUsage', backref='filament', lazy=True, cascade='all, delete-orphan')
-    
+
+    CODE_PREFIX = 'F-'
+
+    @property
+    def code(self):
+        """The spool's label code (F-0042). Derived from the id, so every spool has one and it never changes."""
+        return f'{self.CODE_PREFIX}{self.id:04d}' if self.id is not None else None
+
+    @classmethod
+    def id_from_code(cls, code):
+        """The filament id a label code (F-0042, f-42 or plain 42) refers to, or None if it isn't one."""
+        text = (code or '').strip().upper()
+        if text.startswith(cls.CODE_PREFIX):
+            text = text[len(cls.CODE_PREFIX):]
+        return int(text) if text.isdigit() else None
+
     def to_dict(self):
         return {
             'id': self.id,
+            'code': self.code,
             'user_id': self.user_id,
             'color': self.color,
             'material': self.material,
+            'brand': self.brand,
+            'location': self.location,
+            'spool_weight': self.spool_weight,
             'initial_amount': self.initial_amount,
             'current_amount': self.current_amount,
             'unit': self.unit,
@@ -278,7 +303,8 @@ class Order(db.Model):
     print_completed_at = db.Column(db.DateTime)
     print_failures_count = db.Column(db.Integer, default=0)
     print_notes = db.Column(db.Text)
-    
+    board_position = db.Column(db.Float)  # manual order within its column on the orders board; None = not placed yet
+
     # Relationships
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan')
     filament_usage = db.relationship('FilamentUsage', backref='order', lazy=True)
@@ -320,6 +346,7 @@ class Order(db.Model):
             'print_completed_at': self.print_completed_at.isoformat() if self.print_completed_at else None,
             'print_failures_count': self.print_failures_count,
             'print_notes': self.print_notes,
+            'board_position': self.board_position,
             'items': [item.to_dict() for item in self.items],
             'synced_at': self.synced_at.isoformat()
         }

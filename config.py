@@ -49,6 +49,8 @@ class Config:
     # JWT / session configuration
     ACCESS_TOKEN_EXPIRATION_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRATION_MINUTES', '30'))
     REFRESH_TOKEN_EXPIRATION_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRATION_DAYS', '14'))
+    # Sessions started with "Keep me signed in" end this many days after they were last used.
+    REMEMBER_ME_REFRESH_TOKEN_DAYS = int(os.getenv('REMEMBER_ME_REFRESH_TOKEN_DAYS', '90'))
 
 class DevelopmentConfig(Config):
     """Development configuration"""

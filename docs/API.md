@@ -34,14 +34,21 @@ Handle OAuth callback with authorization code.
 ```json
 {
   "code": "auth_code_from_etsy",
-  "code_verifier": "code_verifier_from_login"
+  "code_verifier": "code_verifier_from_login",
+  "remember_me": true
 }
 ```
+
+`remember_me` ("Keep me signed in") makes the session last until `REMEMBER_ME_REFRESH_TOKEN_DAYS`
+(default 90) after it was last used, instead of `REFRESH_TOKEN_EXPIRATION_DAYS` (default 14).
+Refreshing keeps the choice. Only `true` counts; anything else is a normal session.
 
 **Response:**
 ```json
 {
   "token": "jwt_token_here",
+  "refresh_token": "opaque_refresh_token",
+  "remember_me": true,
   "user": {
     "id": 1,
     "etsy_user_id": "user_id",
@@ -153,6 +160,34 @@ Sync new orders from Etsy.
 }
 ```
 
+If Etsy no longer accepts the stored Etsy login (its refresh token expired after 90 days unused, or
+was revoked), this answers **409** with `{"error": "...", "needs_reconnect": true}`: the PrintOps
+session is fine, but the user has to log in with Etsy again to keep syncing. **503** means Etsy
+couldn't be reached. The same applies to `POST /products/sync-etsy`.
+
+Orders Etsy reports completed are put in production status `SHIPPED` when synced (unless they were
+started in PrintOps and later moved back by hand, e.g. for a reprint).
+
+### POST /orders/board/move
+Drop an order into a column of the orders board, saving its new production status and the column's
+card order.
+
+**Request:**
+```json
+{
+  "order_id": 12,
+  "production_status": "PRINTING",
+  "column_order": [9, 12, 4]
+}
+```
+
+`column_order` lists the target column's order ids top to bottom, including `order_id`. Statuses
+are `QUEUED`, `PRINTING`, `PRINTED`, `SHIPPED`, `FAILED`; changing status records the same start,
+finish, failure and ship times as `PUT /orders/:id/production-status`. Each order's place is
+returned as `board_position` in order objects (`null` until placed by hand).
+
+**Response:** The moved order object
+
 ### POST /orders/:id/notes
 Add internal note to order.
 
@@ -215,8 +250,12 @@ List all filaments.
   "filaments": [
     {
       "id": 1,
+      "code": "F-0001",
       "material": "PLA",
       "color": "Red",
+      "brand": "Polymaker",
+      "location": "Shelf A",
+      "spool_weight": 250,
       "initial_amount": 1000,
       "current_amount": 750,
       "cost_per_gram": 0.02,
@@ -237,12 +276,45 @@ Add new filament.
 {
   "material": "PLA",
   "color": "Blue",
+  "brand": "Bambu",
+  "location": "Dry box 2",
+  "spool_weight": 250,
   "initial_amount": 1000,
   "current_amount": 1000,
   "cost_per_gram": 0.015,
   "low_stock_threshold": 100
 }
 ```
+
+`code` is the spool's label code, derived from its id (`F-0042` is spool 42). Spool QR labels hold
+the frontend address `/spool/42`. `spool_weight` is the empty spool's weight in grams.
+
+### GET /filaments/:id
+One spool with its 25 most recent usage entries, newest first (the page a spool's QR label opens).
+
+**Response:** A filament object plus
+```json
+{
+  "usage": [
+    { "id": 7, "amount_used": 20, "description": "Logged from spool label", "order_id": null,
+      "order_etsy_id": null, "created_at": "2026-11-28T06:25:00" }
+  ]
+}
+```
+
+### POST /filaments/:id/adjust
+Set how much is left on a spool, after weighing it or to mark it empty (`0`). The difference is
+logged as usage: positive when filament was used, negative when the count is corrected upward.
+
+**Request:**
+```json
+{
+  "current_amount": 650,
+  "note": "Weighed on scale: 900 g (spool 250 g)"
+}
+```
+
+**Response:** Updated filament object
 
 ### PUT /filaments/:id
 Update filament.
