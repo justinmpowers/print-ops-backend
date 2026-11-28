@@ -1,5 +1,6 @@
 import os
 import ipaddress
+import math
 import re
 import requests
 import smtplib
@@ -21,7 +22,7 @@ from flask_cors import CORS
 from flask_migrate import Migrate, upgrade
 from config import config, token_signing_issue, SIGNING_ISSUE_MESSAGES
 from models import utcnow, db, PrinterLiveStatus, User, Filament, FilamentUsage, Order, OrderItem, ProductProfile, PrintSession, OrderNote, CommunicationLog, Expense, Customer, CustomerRequest, CustomerFeedback, Printer, CustomerFile, PrinterConnection, BambuMaterial, PrintNotification, ScheduledPrint, AlertSettings, ManyfoldSettings, DeviceKey
-from authentication import EtsyOAuth, TokenManager, token_required, DeviceKeyManager, device_required
+from authentication import EtsyOAuth, EtsyTokenRefreshError, TokenManager, token_required, DeviceKeyManager, device_required
 from etsy_api import EtsyAPI, OrderSyncManager, ListingSyncManager, schedule_order_prints
 from manyfold_api import ManyfoldAPI, ManyfoldAPIError
 from bambu_lan import get_bambu_lan_status, BambuLANError
@@ -48,17 +49,29 @@ class EtsyAccessError(Exception):
     pattern CodeQL flags, since nothing then stops a future raise from
     accidentally embedding something sensitive.
     """
-    def __init__(self, user_message, status_code=422):
+    def __init__(self, user_message, status_code=422, needs_reconnect=False):
         super().__init__(user_message)
         self.user_message = user_message
         self.status_code = status_code
+        self.needs_reconnect = needs_reconnect
+
+    def to_response(self):
+        body = {'error': self.user_message, 'success': False}
+        if self.needs_reconnect:
+            body['needs_reconnect'] = True
+        return jsonify(body), self.status_code
+
+
+# Renew the Etsy token this long before it expires, so it can't run out partway through a sync.
+ETSY_TOKEN_REFRESH_MARGIN = timedelta(minutes=2)
 
 
 def _ensure_etsy_access(user):
     """Ensure user's Etsy access token is fresh and shop_id is resolved.
 
     Returns (EtsyAPI instance, shop_id). Raises EtsyAccessError if the
-    account has no Etsy shop that can be linked/recovered.
+    account has no Etsy shop that can be linked/recovered, or if Etsy no longer
+    accepts the stored Etsy login (needs_reconnect).
     """
     if user.token_expires_at:
         token_expires_at = user.token_expires_at
@@ -66,9 +79,17 @@ def _ensure_etsy_access(user):
             # If naive, assume it's UTC
             token_expires_at = token_expires_at.replace(tzinfo=timezone.utc)
 
-        if token_expires_at <= datetime.now(timezone.utc):
+        if token_expires_at <= datetime.now(timezone.utc) + ETSY_TOKEN_REFRESH_MARGIN:
             logger.info("Token expired, refreshing")
-            token_data = EtsyOAuth.refresh_access_token(user.refresh_token)
+            try:
+                token_data = EtsyOAuth.refresh_access_token(user.refresh_token)
+            except EtsyTokenRefreshError as e:
+                if e.rejected:
+                    logger.warning("Etsy rejected the stored refresh token; the user must reconnect Etsy")
+                    raise EtsyAccessError('Your Etsy connection has expired. Reconnect Etsy to keep syncing.',
+                                          status_code=409, needs_reconnect=True)
+                logger.warning("Could not reach Etsy to refresh the token")
+                raise EtsyAccessError('Could not reach Etsy right now. Try again in a minute.', status_code=503)
             user.access_token = token_data['access_token']
             user.refresh_token = token_data.get('refresh_token', user.refresh_token)
             user.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=token_data.get('expires_in', 3600))
@@ -91,6 +112,56 @@ def _ensure_etsy_access(user):
             raise EtsyAccessError('No Etsy shop linked to this account. Please log out and log back in.')
 
     return EtsyAPI(user.access_token), user.shop_id
+
+
+PRODUCTION_STATUSES = ('QUEUED', 'PRINTING', 'PRINTED', 'SHIPPED', 'FAILED')
+MAX_BOARD_COLUMN = 1000   # more cards than one board column could reasonably hold
+SPOOL_HISTORY_LIMIT = 25  # usage entries shown on a spool's page
+
+
+def _optional_text(value, max_length=255):
+    """A trimmed string, or None when blank. Longer input is cut to fit the column."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text[:max_length] or None
+
+
+def _optional_number(value):
+    """A float, or None when blank. Raises ValueError for anything else that isn't a finite number."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError('not a finite number')
+    return number
+
+
+def _apply_production_status(order, new_status):
+    """Set an order's production status and record what the change means (start/finish times, failures).
+
+    Does nothing if the status isn't changing, so re-saving an order (to edit its notes, say)
+    doesn't count another failure.
+    """
+    if order.production_status == new_status:
+        return
+    order.production_status = new_status
+    now = datetime.now(timezone.utc)
+    if new_status == 'PRINTING' and not order.print_started_at:
+        order.print_started_at = now
+    elif new_status == 'PRINTED' and not order.print_completed_at:
+        order.print_completed_at = now
+        if order.print_started_at:
+            # The stored start time comes back from the database without a timezone.
+            started = order.print_started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            order.actual_print_time = int((now - started).total_seconds() / 60)
+    elif new_status == 'FAILED':
+        order.print_failures_count = (order.print_failures_count or 0) + 1
+    elif new_status == 'SHIPPED' and not order.shipped_at:
+        order.shipped_at = now
+
 
 def create_app(config_name='development'):
     """Application factory"""
@@ -151,6 +222,7 @@ def create_app(config_name='development'):
         try:
             code = request.json.get('code')
             code_verifier = request.json.get('code_verifier')
+            remember_me = request.json.get('remember_me') is True
             if not code:
                 return jsonify({'error': 'Missing authorization code'}), 400
             if not code_verifier:
@@ -219,12 +291,13 @@ def create_app(config_name='development'):
             db.session.commit()
 
             # Issue an app-session token pair (short-lived access + refresh)
-            access_token, refresh_token = TokenManager.create_token_pair(user.id)
+            access_token, refresh_token = TokenManager.create_token_pair(user.id, remember_me)
 
             return jsonify({
                 'success': True,
                 'token': access_token,
                 'refresh_token': refresh_token,
+                'remember_me': remember_me,
                 'user': {
                     'id': user.id,
                     'etsy_user_id': user.etsy_user_id,
@@ -324,7 +397,7 @@ def create_app(config_name='development'):
             return jsonify(result), 200 if result['success'] else 500
 
         except EtsyAccessError as e:
-            return jsonify({'error': e.user_message}), e.status_code
+            return e.to_response()
         except Exception:
             # Log detailed error information securely on the server
             logger.exception("Exception in sync_orders")
@@ -346,7 +419,7 @@ def create_app(config_name='development'):
             return jsonify(result), 200 if result['success'] else 500
 
         except EtsyAccessError as e:
-            return jsonify({'error': e.user_message}), e.status_code
+            return e.to_response()
         except Exception:
             logger.exception("Exception in sync_products_from_etsy")
             return jsonify({'error': 'An error occurred during product synchronization', 'success': False}), 500
@@ -803,14 +876,21 @@ def create_app(config_name='development'):
                 initial_amount=float(data.get('initial_amount', 0)),
                 current_amount=float(data.get('current_amount', 0)),
                 unit=data.get('unit', 'g'),
-                cost_per_gram=float(data.get('cost_per_gram', 0)) if data.get('cost_per_gram') else None
+                cost_per_gram=float(data.get('cost_per_gram', 0)) if data.get('cost_per_gram') else None,
+                low_stock_threshold=float(data['low_stock_threshold']) if data.get('low_stock_threshold') else 100.0,
+                brand=_optional_text(data.get('brand')),
+                location=_optional_text(data.get('location')),
+                spool_weight=_optional_number(data.get('spool_weight')),
             )
-            
+
             db.session.add(filament)
             db.session.commit()
-            
+
             return jsonify(filament.to_dict()), 201
-        
+
+        except (TypeError, ValueError):
+            db.session.rollback()
+            return jsonify({'error': 'Amounts, cost and spool weight must be numbers'}), 400
         except Exception:
             db.session.rollback()
             logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
@@ -840,16 +920,82 @@ def create_app(config_name='development'):
                 filament.cost_per_gram = float(data['cost_per_gram']) if data['cost_per_gram'] else None
             if 'low_stock_threshold' in data:
                 filament.low_stock_threshold = float(data['low_stock_threshold']) if data['low_stock_threshold'] else 100.0
-            
+            if 'brand' in data:
+                filament.brand = _optional_text(data['brand'])
+            if 'location' in data:
+                filament.location = _optional_text(data['location'])
+            if 'spool_weight' in data:
+                filament.spool_weight = _optional_number(data['spool_weight'])
+
             filament.updated_at = utcnow()
             db.session.commit()
-            
+
             return jsonify(filament.to_dict()), 200
-        
+
+        except (TypeError, ValueError):
+            db.session.rollback()
+            return jsonify({'error': 'Amounts, cost and spool weight must be numbers'}), 400
         except Exception:
             db.session.rollback()
             logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
-    
+
+    @app.route('/api/filaments/<int:filament_id>', methods=['GET'])
+    @token_required
+    def get_filament(filament_id):
+        """One spool with its recent usage, for the page a spool's QR label opens."""
+        try:
+            filament = Filament.query.filter_by(id=filament_id, user_id=request.user.id).first()
+            if not filament:
+                return jsonify({'error': 'Filament not found'}), 404
+
+            recent = (FilamentUsage.query.filter_by(filament_id=filament.id)
+                      .order_by(FilamentUsage.created_at.desc(), FilamentUsage.id.desc())
+                      .limit(SPOOL_HISTORY_LIMIT).all())
+            body = filament.to_dict()
+            body['usage'] = [dict(u.to_dict(), order_etsy_id=u.order.etsy_order_id if u.order else None)
+                             for u in recent]
+            return jsonify(body), 200
+
+        except Exception:
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
+
+    @app.route('/api/filaments/<int:filament_id>/adjust', methods=['POST'])
+    @token_required
+    def adjust_filament(filament_id):
+        """Set how much is left on a spool (after weighing it, or to mark it empty).
+
+        Body: {current_amount, note?}. The difference is logged in the spool's usage history
+        (positive when filament was used, negative when the count was low and is corrected up).
+        """
+        try:
+            filament = Filament.query.filter_by(id=filament_id, user_id=request.user.id).first()
+            if not filament:
+                return jsonify({'error': 'Filament not found'}), 404
+
+            data = request.get_json(silent=True) or {}
+            try:
+                remaining = float(data.get('current_amount'))
+            except (TypeError, ValueError):
+                remaining = None
+            if remaining is None or not math.isfinite(remaining) or remaining < 0:
+                return jsonify({'error': 'current_amount must be a number of grams, 0 or more'}), 400
+
+            change = filament.current_amount - remaining
+            if change:
+                db.session.add(FilamentUsage(
+                    filament_id=filament.id,
+                    amount_used=change,
+                    description=_optional_text(data.get('note'), 500) or 'Adjusted remaining amount',
+                ))
+            filament.current_amount = remaining
+            filament.updated_at = utcnow()
+            db.session.commit()
+            return jsonify(filament.to_dict()), 200
+
+        except Exception:
+            db.session.rollback()
+            logger.exception("Unhandled error"); return jsonify({'error': 'An error occurred'}), 500
+
     @app.route('/api/filaments/<filament_id>', methods=['DELETE'])
     @token_required
     def delete_filament(filament_id):
@@ -1738,27 +1884,11 @@ def create_app(config_name='development'):
             data = request.get_json()
             new_status = data.get('production_status')
             
-            if new_status not in ['QUEUED', 'PRINTING', 'PRINTED', 'SHIPPED', 'FAILED']:
+            if new_status not in PRODUCTION_STATUSES:
                 return jsonify({'error': 'Invalid status'}), 400
             
-            order.production_status = new_status
-            
-            # Track timestamps
-            if new_status == 'PRINTING' and not order.print_started_at:
-                order.print_started_at = datetime.now(timezone.utc)
-            elif new_status == 'PRINTED' and not order.print_completed_at:
-                order.print_completed_at = datetime.now(timezone.utc)
-                # Calculate actual print time
-                if order.print_started_at:
-                    # The stored start time comes back from the database without a timezone.
-                    started = order.print_started_at
-                    if started.tzinfo is None:
-                        started = started.replace(tzinfo=timezone.utc)
-                    delta = order.print_completed_at - started
-                    order.actual_print_time = int(delta.total_seconds() / 60)
-            elif new_status == 'FAILED':
-                order.print_failures_count = (order.print_failures_count or 0) + 1
-            
+            _apply_production_status(order, new_status)
+
             # Update notes if provided
             if 'print_notes' in data:
                 order.print_notes = data['print_notes']
@@ -1770,6 +1900,50 @@ def create_app(config_name='development'):
             db.session.rollback()
             logger.exception("Error updating production status")
             return jsonify({'error': 'Failed to update production status'}), 500
+
+    @app.route('/api/orders/board/move', methods=['POST'])
+    @token_required
+    def move_order_on_board():
+        """Drop an order into a board column and save that column's card order.
+
+        Body: {order_id, production_status, column_order}, where column_order lists the ids of the
+        cards in the target column from top to bottom, the moved order included. Ids that aren't
+        this user's orders are ignored.
+        """
+        try:
+            current_user = request.user
+            data = request.get_json(silent=True) or {}
+            order_id = data.get('order_id')
+            new_status = data.get('production_status')
+            column_order = data.get('column_order')
+
+            if new_status not in PRODUCTION_STATUSES:
+                return jsonify({'error': 'Invalid status'}), 400
+            if (not isinstance(column_order, list) or len(column_order) > MAX_BOARD_COLUMN
+                    or not all(type(i) is int for i in column_order)
+                    or len(set(column_order)) != len(column_order)):
+                return jsonify({'error': 'column_order must be a list of distinct order ids'}), 400
+            if order_id not in column_order:
+                return jsonify({'error': 'column_order must include order_id'}), 400
+
+            orders = Order.query.filter(Order.user_id == current_user.id, Order.id.in_(column_order)).all()
+            by_id = {o.id: o for o in orders}
+            moved = by_id.get(order_id)
+            if not moved:
+                return jsonify({'error': 'Order not found'}), 404
+
+            _apply_production_status(moved, new_status)
+            for position, oid in enumerate(column_order):
+                if oid in by_id:
+                    by_id[oid].board_position = float(position)
+
+            db.session.commit()
+            return jsonify(moved.to_dict()), 200
+
+        except Exception:
+            db.session.rollback()
+            logger.exception("Error moving order on board")
+            return jsonify({'error': 'Failed to move order'}), 500
 
     @app.route('/api/orders/<int:order_id>/priority', methods=['PUT'])
     @token_required

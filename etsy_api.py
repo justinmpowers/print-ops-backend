@@ -121,7 +121,23 @@ class OrderSyncManager:
         
         # Return mapped status or uppercase the original if not in map
         return status_map.get(etsy_status.lower(), etsy_status.upper())
-    
+
+    @staticmethod
+    def mark_shipped_if_etsy_completed(order, previous_status):
+        """Put an order in production status SHIPPED once Etsy reports it completed (shipped).
+
+        Applies when Etsy's status turns COMPLETED, including orders first synced already completed,
+        and to orders completed on Etsy before this rule existed that still sit in QUEUED without
+        ever being started here. An order that was started in PrintOps and later moved back by hand
+        (a reprint, say) is left where it was put.
+        """
+        if order.status != 'COMPLETED' or order.production_status == 'SHIPPED':
+            return
+        just_completed = previous_status != 'COMPLETED'
+        never_started = order.production_status in (None, 'QUEUED') and order.print_started_at is None
+        if just_completed or never_started:
+            order.production_status = 'SHIPPED'
+
     @staticmethod
     def sync_orders_from_etsy(user, shop_id, etsy_api, months=6):
         """
@@ -226,10 +242,12 @@ class OrderSyncManager:
                 
                 if existing_order:
                     # Update existing order
+                    previous_status = existing_order.status
                     existing_order.status = status
                     existing_order.updated_at = datetime.fromtimestamp(receipt_data.get('update_timestamp', 0), tz=timezone.utc)
                     if receipt_data.get('shipped_timestamp'):
                         existing_order.shipped_at = datetime.fromtimestamp(receipt_data['shipped_timestamp'], tz=timezone.utc)
+                    OrderSyncManager.mark_shipped_if_etsy_completed(existing_order, previous_status)
                     if not existing_order.customer_id:
                         customer = upsert_customer(receipt_data, add_order=False)
                         if customer:
@@ -254,7 +272,8 @@ class OrderSyncManager:
                     
                     if receipt_data.get('shipped_timestamp'):
                         order.shipped_at = datetime.fromtimestamp(receipt_data['shipped_timestamp'], tz=timezone.utc)
-                    
+                    OrderSyncManager.mark_shipped_if_etsy_completed(order, previous_status=None)
+
                     # Get transactions (line items) for this receipt
                     try:
                         transactions_response = etsy_api.get_receipt_transactions(shop_id, receipt_id)
