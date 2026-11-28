@@ -8,4 +8,4 @@ requests==2.34.2
 PyJWT==2.15.1
 psycopg2-binary==2.9.13
 paho-mqtt==2.2.0
-gunicorn==23.0.0
+gunicorn==27.0.1
