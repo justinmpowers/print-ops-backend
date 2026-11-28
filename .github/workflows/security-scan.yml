@@ -21,6 +21,11 @@ env:
   SEMGREP_IMAGE: docker.io/semgrep/semgrep:1.186.0@sha256:6e1b04340e60e910fbb4ddbf3c857ab0918f064417ad5ac530014ccb3cf8c8f1
   GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
   GRYPE_IMAGE: docker.io/anchore/grype:v0.122.1@sha256:661583704a253c0448ed63998b5ea2cd9d5a76ee71eedc4aed439b8ce3e93a1c
+  # Pull request results are filed under the PR's head commit, as CodeQL files its own. GitHub
+  # recreates a PR's test merge commit from time to time, and results filed under an old one would
+  # leave the code-scanning merge rule waiting for results that never come.
+  SCAN_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  SCAN_REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
 
 jobs:
   semgrep:
@@ -31,6 +36,8 @@ jobs:
       security-events: write   # upload results to code scanning
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.SCAN_SHA }}
 
       - name: Scan
         run: |
@@ -50,6 +57,8 @@ jobs:
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+          ref: ${{ env.SCAN_REF }}
+          sha: ${{ env.SCAN_SHA }}
 
   gitleaks:
     name: Secrets (gitleaks)
@@ -89,6 +98,8 @@ jobs:
       security-events: write   # upload results to code scanning
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.SCAN_SHA }}
 
       # Scanned from a saved tarball, so the scanner never gets the Docker socket.
       - name: Build image
@@ -107,3 +118,5 @@ jobs:
         with:
           sarif_file: grype.sarif
           category: grype-image
+          ref: ${{ env.SCAN_REF }}
+          sha: ${{ env.SCAN_SHA }}
