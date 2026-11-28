@@ -33,12 +33,16 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Scan
-        run: >-
-          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE"
-          semgrep scan --metrics=off
-          --config p/python --config p/flask --config p/typescript --config p/javascript
-          --config p/dockerfile --config p/github-actions --config p/secrets --config p/owasp-top-ten
-          --sarif --output semgrep.sarif
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src "$SEMGREP_IMAGE" \
+            semgrep scan --metrics=off \
+            --config p/python --config p/flask --config p/typescript --config p/javascript \
+            --config p/dockerfile --config p/github-actions --config p/secrets --config p/owasp-top-ten \
+            --sarif --output semgrep.sarif
+          # Semgrep keeps findings silenced with nosemgrep in its SARIF, marked as suppressed, and
+          # code scanning opens alerts for them anyway, so drop them before uploading.
+          jq '.runs[].results |= map(select((.suppressions // []) | length == 0))' semgrep.sarif > semgrep.tmp
+          mv semgrep.tmp semgrep.sarif
 
       - name: Upload to code scanning
         if: always() && hashFiles('semgrep.sarif') != ''
