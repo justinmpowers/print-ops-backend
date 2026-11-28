@@ -1,0 +1,18 @@
+# Known gitleaks false positives, by fingerprint (commit:file:rule:line).
+# docs/BAMBU_WORKFLOW_EXAMPLE.md: curl examples with the placeholder 'Bearer YOUR_JWT_TOKEN'.
+# tests/conftest.py: the test suite's dummy SECRET_KEY, used only by pytest.
+# Reviewed 2026-11-28. Add a line here only after checking a finding isn't a real secret.
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:134
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:208
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:21
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:242
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:271
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:300
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:331
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:360
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:372
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:440
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:45
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:68
+5b94871c366702e7bdc7afea855189f8c9d64189:docs/BAMBU_WORKFLOW_EXAMPLE.md:curl-auth-header:98
+ab61f7c685ea4a3cd0a0f6a94a5613518db8d26b:tests/conftest.py:generic-api-key:7

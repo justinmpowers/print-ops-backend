@@ -2054,7 +2054,7 @@ def create_app(config_name='development'):
             }
             
             try:
-                response = requests.get(
+                response = requests.get(  # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests -- fixed host api.etsy.com; only the stored shop id varies
                     f'https://api.etsy.com/v3/application/shops/{current_user.shop_id}/conversations',
                     headers=headers,
                     params={'limit': 25},
@@ -2250,14 +2250,14 @@ def create_app(config_name='development'):
 
             try:
                 if connection.connection_type == 'octoprint':
-                    response = requests.get(f"{connection.api_url}/api/printer", headers=headers, timeout=5)
+                    response = requests.get(f"{connection.api_url}/api/printer", headers=headers, timeout=5)  # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests -- api_url passed _is_safe_printer_url when saved and above
                 elif connection.connection_type in ['klipper', 'moonraker']:
-                    response = requests.get(f"{connection.api_url}/printer/info", headers=headers, timeout=5)
+                    response = requests.get(f"{connection.api_url}/printer/info", headers=headers, timeout=5)  # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests -- api_url passed _is_safe_printer_url when saved and above
                 elif connection.connection_type == 'bambu_cloud':
                     if not connection.api_key or not connection.serial_number:
                         return jsonify({'error': 'API key and serial number required for Bambu Cloud'}), 400
                     headers['Authorization'] = f'Bearer {connection.api_key}'
-                    response = requests.get(
+                    response = requests.get(  # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests -- fixed host api.bambulab.com
                         f"https://api.bambulab.com/v1/iot-service/api/user/device/{connection.serial_number}",
                         headers=headers,
                         timeout=5
@@ -3130,4 +3130,4 @@ if __name__ == "__main__":
     app = create_app(os.getenv('FLASK_ENV', 'development'))
     # Debug mode controlled by environment configuration, never hardcoded
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
-    app.run(host='0.0.0.0', debug=debug_mode, port=5000)
+    app.run(host='0.0.0.0', debug=debug_mode, port=5000)  # nosemgrep: python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host -- local dev only; production runs gunicorn
