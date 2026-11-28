@@ -2318,7 +2318,7 @@ def create_app(config_name='development'):
                     return jsonify({'error': 'Invalid location parameter'}), 400
 
                 encoded_location = quote(location, safe='')
-                weather_url = f'http://api.openweathermap.org/data/2.5/weather?q={encoded_location}&appid={api_key}'
+                weather_url = f'https://api.openweathermap.org/data/2.5/weather?q={encoded_location}&appid={api_key}'
                 response = requests.get(weather_url, timeout=5)
                 response.raise_for_status()
                 weather_data = response.json()
